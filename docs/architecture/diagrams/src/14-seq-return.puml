@@ -1,0 +1,42 @@
+@startuml 14-seq-return
+!include _style.puml
+title Return processing with goodsReceived signal
+autonumber
+actor "crm-sales" as u
+actor "Warehouse" as w
+participant "Crm.Api" as api
+database "crm-db" as cdb
+participant "ReturnProcessingWorkflow" as wf
+participant "ERP worker" as erp
+database "erp-db" as edb
+participant "CRM worker" as crmw
+
+u -> api : POST /quotes/{id}/returns {reason, lines:[{sku,quantity}]}
+api -> cdb : lock quote row; check SKUs on quote and\nquantity <= ordered - other non-rejected returns\nINSERT return_requests (Requested) + lines + outbox
+api --> u : 201
+cdb --> wf : outbox publisher starts\nReturnProcessing:<tenant>:<returnId>
+
+wf -> erp : erp.authorize-return
+erp -> edb : lock order FOR UPDATE; compute returnable qty per SKU\nstore Authorized or Rejected
+note right of erp : Business refusals are decisions,\nnot failures. Replay returns stored decision.
+erp --> wf : Authorized(erpReturnId) | Rejected(note)
+
+alt Rejected
+  wf -> crmw : crm.record-return-decision Rejected
+  crmw -> cdb : Requested -> Rejected
+else Authorized
+  wf -> crmw : crm.record-return-decision Authorized(erpReturnId)
+  crmw -> cdb : Requested -> Authorized
+  wf -> wf : await signal 'goodsReceived' (max 30 days)
+  alt signal arrives
+    w -> wf : signal goodsReceived {receivedBy}
+    note right of w : Signals are not authenticated yet\n(Phase 9 gap).
+    wf -> erp : erp.complete-return
+    erp -> edb : Authorized -> Completed gates a single\nstock add (on_hand += qty)
+    wf -> crmw : crm.record-return-decision Completed
+    crmw -> cdb : Authorized -> Completed
+  else timeout
+    wf --> wf : result AwaitingGoodsExpired\n(stays Authorized in both systems)
+  end
+end
+@enduml

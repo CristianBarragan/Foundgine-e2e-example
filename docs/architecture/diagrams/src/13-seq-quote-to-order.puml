@@ -1,0 +1,49 @@
+@startuml 13-seq-quote-to-order
+!include _style.puml
+title Quote to order (happy path and failure outcomes)
+autonumber
+actor "crm-sales" as s
+actor "crm-admin\n(not the submitter)" as a
+participant "Crm.Api" as api
+database "crm-db" as cdb
+participant "OutboxPublisher" as pub
+participant "QuoteToOrderWorkflow" as wf
+participant "ERP worker" as erp
+database "erp-db" as edb
+participant "CRM worker" as crmw
+
+s -> api : POST /quotes/{id}/submit
+alt total > threshold
+  api --> s : PendingApproval
+  a -> api : POST /quotes/{id}/approve
+  api -> cdb : PendingApproval -> Approved\n+ admin_audit row
+else total <= threshold
+  api --> s : Approved
+end
+s -> api : POST /quotes/{id}/accept
+api -> cdb : BEGIN\nrequire Active mapping\nquote -> Accepted\nopportunity -> ClosedWon\nINSERT outbox QuoteAccepted\nCOMMIT
+pub -> wf : start QuoteToOrder:<tenant>:<quoteId>
+wf -> erp : erp.create-order-with-reservation
+group ONE atomic ERP transaction (synchronous)
+  erp -> edb : customer Active and matches CRM id?\nSKUs active? unit price >= min_unit_price?\nquote total = sum of lines?
+  erp -> edb : INSERT sales_orders + lines + order_inbox
+  erp -> edb : UPDATE erp_inventory SET reserved = reserved + q\nWHERE on_hand - reserved >= q  (SKU order)
+  note right : Any failure rolls everything back.\nReplay returns the existing Open order,\nreserves nothing twice.
+end
+erp --> wf : erpOrderId
+wf -> crmw : crm.record-erp-order(tenantId, quoteId, erpOrderId)
+crmw -> cdb : Accepted -> Ordered (sets erp_order_id)
+wf --> wf : result Completed
+
+== Failure outcomes (workflow result Failed) ==
+alt ERP refuses: ValidationFailed / InsufficientStock (not retried)
+  wf -> crmw : crm.mark-order-failed(reason)
+  crmw -> cdb : Accepted -> OrderFailed
+else CRM permanently refuses the order (NotFound / Validation / Conflict)
+  wf -> erp : erp.cancel-order  (compensation, idempotent)
+  erp -> edb : order -> Cancelled, release reservation
+  wf -> crmw : crm.mark-order-failed(reason)
+else CRM merely unavailable
+  note over wf, crmw : Retried without limit (backoff 1s .. 1min). The outage is waited out.
+end
+@enduml

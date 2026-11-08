@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "tenantId": "acme",
+  "quoteId": 7,
+  "opportunityId": 3,
+  "crmCustomerId": 42,
+  "correlationId": "corr-quote-7",
+  "approvalRequired": false,
+  "quote": {
+    "schemaVersion": 1,
+    "tenantId": "acme",
+    "quoteId": 7,
+    "opportunityId": 3,
+    "crmCustomerId": 42,
+    "erpCustomerId": "ERP-9001",
+    "correlationId": "corr-quote-7",
+    "total": 200.00,
+    "lines": [
+      { "sku": "SKU-1", "description": "Widget", "quantity": 2, "unitPrice": 100.00 }
+    ]
+  }
+}

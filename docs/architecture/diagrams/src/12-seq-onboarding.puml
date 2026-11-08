@@ -1,0 +1,45 @@
+@startuml 12-seq-onboarding
+!include _style.puml
+title Customer onboarding (CRM -> ERP -> CRM)
+autonumber
+actor "crm-sales" as u
+participant "Crm.Api" as api
+database "crm-db" as cdb
+participant "OutboxPublisher" as pub
+participant "Temporal" as t
+participant "CustomerOnboardingWorkflow\n(orchestration)" as wf
+participant "ERP worker\n(queue erp)" as erp
+database "erp-db" as edb
+participant "CRM worker\n(queue crm)" as crmw
+
+u -> api : POST /api/v1/customers {kind,name,email,phone}
+activate api
+api -> cdb : BEGIN\nINSERT customers\nINSERT mapping (Pending)\nINSERT outbox_messages (OnboardingRequested)\nCOMMIT
+api --> u : 201 Created
+deactivate api
+
+loop every ~2 s when idle
+  pub -> cdb : SELECT unpublished ... FOR UPDATE SKIP LOCKED
+end
+pub -> t : start CustomerOnboardingWorkflow\nid = CustomerOnboarding:<tenant>:<crmId>[:<attempt>]\n(RejectDuplicate, queue orchestration)
+pub -> cdb : UPDATE published_at = now()
+note right of pub : At-least-once delivery;\nthe workflow id makes it effectively once.
+
+t -> wf : run onboard(CustomerSync)
+wf -> erp : erp.validate-and-create-customer
+activate erp
+erp -> edb : validate; INSERT erp_customers (ERP-owned id from seq)\nINSERT customer_inbox (tenant, correlationId)
+note right of erp : Replay returns the existing customer\n(unique tenant + CRM id).
+erp --> wf : erpCustomerId
+deactivate erp
+wf -> crmw : crm.record-erp-customer(tenantId, crmCustomerId, erpCustomerId)
+crmw -> cdb : mapping -> Active (idempotent)
+crmw --> wf : ok
+wf --> t : Completed
+
+alt validation fails or retries exhausted
+  wf -> crmw : crm.mark-sync-failed(reason)
+  crmw -> cdb : mapping -> Failed
+  note right of wf : Recovery: POST /api/v1/integration/reconcile
+end
+@enduml

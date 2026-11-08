@@ -1,0 +1,31 @@
+@startuml 23-security-layers
+!include _style.puml
+title Defence in depth: where each rule is enforced
+rectangle "1. Transport / identity" as l1 #E0F2FE {
+  card "JWT: issuer, audience, lifetime, signature\nHTTPS + HSTS outside Development"
+}
+rectangle "2. Throttling" as l2 #E0F2FE {
+  card "Fixed window per tenant (default 600/min)\nper IP when unauthenticated -> 429"
+}
+rectangle "3. Role policy" as l3 #DCFCE7 {
+  card "crm.read / crm.write / crm.admin on each endpoint\nfallback policy: authenticated user required"
+}
+rectangle "4. Tenant scoping" as l4 #DCFCE7 {
+  card "tenant_id claim in every service query\nother tenant's ids -> 404"
+}
+rectangle "5. Business invariants" as l5 #FEF9C3 {
+  card "Segregated approval (approver != submitter)\nconditional status UPDATEs\nDB CHECK + UNIQUE constraints"
+}
+rectangle "6. Integration safety" as l6 #FEF9C3 {
+  card "No tokens in Temporal history\ntenantId in every activity input\nidempotency: workflow ids, inboxes, versions"
+}
+rectangle "7. Audit" as l7 #FEE2E2 {
+  card "admin_audit: approve, reject, reconcile\n(role denials by policy are not audited yet)"
+}
+l1 -down-> l2
+l2 -down-> l3
+l3 -down-> l4
+l4 -down-> l5
+l5 -down-> l6
+l6 -down-> l7
+@enduml

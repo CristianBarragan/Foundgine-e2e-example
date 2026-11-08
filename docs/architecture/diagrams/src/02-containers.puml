@@ -1,0 +1,39 @@
+@startuml 02-containers
+!include <C4/C4_Container>
+!include _style.puml
+LAYOUT_WITH_LEGEND()
+title Container view: services, workers and data stores
+
+Person(user, "User", "Browser / API client")
+System_Ext(idp, "Keycloak 26", "Realm: enterprise")
+
+System_Boundary(crmb, "CRM  (.NET 10 + Foundgine)") {
+  Container(crm, "Crm.Api", "ASP.NET Core Minimal API", "REST /api/v1, tenant scoping, quote state machine, outbox publisher, hosted Temporal worker (queue: crm)")
+  ContainerDb(crmdb, "crm-db", "PostgreSQL 17 :5433", "customers, contacts, opportunities, quotes, mappings, outbox, fulfilment mirrors, returns, admin_audit")
+}
+
+System_Boundary(orch, "Orchestration  (Java 21, no Spring)") {
+  Container(ow, "OrchestrationWorker", "Temporal Java SDK", "Hosts workflow definitions only (queue: orchestration)")
+}
+
+System_Boundary(erpb, "ERP  (Java + Spring Boot)") {
+  Container(erp, "erp", "Spring Boot :8082", "Domain services + hosted Temporal worker (queue: erp, when temporal.enabled=true)")
+  ContainerDb(erpdb, "erp-db", "PostgreSQL 17 :5434", "customers, products, inventory, orders, reservations, returns, inboxes (Flyway)")
+}
+
+System_Boundary(tb, "Temporal") {
+  Container(ts, "Temporal server", "temporalio/auto-setup 1.25 :7233", "Namespace: enterprise")
+  ContainerDb(tdb, "temporal-db", "PostgreSQL 17", "Workflow history")
+  Container(tui, "Temporal UI", "2.31.2 :8233", "Workflow visibility")
+}
+
+Rel(user, crm, "Calls API", "HTTPS, Bearer JWT")
+Rel(crm, idp, "Fetches OIDC discovery + signing keys", "HTTP")
+Rel(crm, crmdb, "Reads/writes", "Npgsql / EF Core")
+Rel(crm, ts, "Starts workflows (outbox); polls queue 'crm'", "gRPC")
+Rel(ow, ts, "Polls queue 'orchestration'; schedules activities", "gRPC")
+Rel(erp, ts, "Polls queue 'erp'", "gRPC")
+Rel(erp, erpdb, "Reads/writes", "Spring JDBC")
+Rel(ts, tdb, "Persists history", "SQL")
+Rel(tui, ts, "Queries", "gRPC")
+@enduml

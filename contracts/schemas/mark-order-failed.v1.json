@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://enterprise.example/schemas/mark-order-failed.v1.json",
+  "title": "crm.mark-order-failed (queue: crm)",
+  "description": "Quote Accepted -> OrderFailed. Idempotent. Failure types: CrmNotFoundException (unknown quote or tenant), CrmConflictException (quote already Ordered or not Accepted); both non-retryable.",
+  "type": "object",
+  "required": ["tenantId", "quoteId", "reason"],
+  "additionalProperties": false,
+  "properties": {
+    "tenantId": { "type": "string" },
+    "quoteId": { "type": "integer" },
+    "reason": { "type": "string", "maxLength": 500 }
+  }
+}

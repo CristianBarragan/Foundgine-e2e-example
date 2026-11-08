@@ -1,0 +1,21 @@
+@startuml 01-system-context
+!include <C4/C4_Context>
+!include _style.puml
+LAYOUT_WITH_LEGEND()
+title System context: enterprise platform
+
+Person(sales, "Sales / support user", "crm-sales, crm-support, crm-admin")
+Person(ops, "Operator / admin", "enterprise-admin, erp-admin, integration operator")
+Person(warehouse, "Warehouse staff", "Confirms goods received on returns (Temporal signal)")
+
+System(platform, "Enterprise platform", "CRM + ERP integrated by durable workflows. Each system owns its own data and identifiers.")
+
+System_Ext(idp, "Keycloak", "Single identity provider: users, service accounts, roles, tenant_id claim")
+System_Ext(otel, "OTLP collector", "Receives traces and metrics (optional, Telemetry:Enabled)")
+
+Rel(sales, platform, "Manages customers, opportunities, quotes, returns", "HTTPS / JSON, Bearer JWT")
+Rel(ops, platform, "Approves quotes, reconciles integrations, reads audit", "HTTPS / JSON, Bearer JWT")
+Rel(warehouse, platform, "Signals goodsReceived", "Temporal CLI / API")
+Rel(platform, idp, "Validates tokens, obtains service tokens", "OIDC")
+Rel(platform, otel, "Exports telemetry", "OTLP")
+@enduml

@@ -1,0 +1,35 @@
+@startuml 15-seq-auth
+!include _style.puml
+title Authentication, tenant resolution and authorization
+autonumber
+actor "User (e.g. alice)" as u
+participant "Keycloak\nrealm enterprise" as kc
+participant "Crm.Api" as api
+participant "Service\n(tenant scoped)" as svc
+database "crm-db" as db
+
+u -> kc : token request (dev: password grant, client enterprise-web, PKCE)
+kc --> u : access token\nclaims: sub, roles[], tenant_id, aud (crm-api, erp-api)
+u -> api : GET /api/v1/customers  Authorization: Bearer <jwt>
+api -> kc : discovery + signing keys (cached)
+api -> api : validate issuer, audience = crm-api,\nlifetime (30 s skew), signature\n(MapInboundClaims = false: keep sub / roles / tenant_id)
+api -> api : rate limit partition = tenant:<tenant_id>
+api -> api : policy: crm.read = any of enterprise-admin, crm-admin,\ncrm-sales, crm-support
+api -> svc : GetAsync(id)
+svc -> svc : TenantId = claim tenant_id (else Unauthorized)
+svc -> db : SELECT ... WHERE tenant_id = @tenant AND customer_id = @id
+db --> svc : row or none
+svc --> api : result, or NotFound for another tenant's id
+api --> u : 200 / 404 (never 403 for cross-tenant ids)
+
+== Dev / test alternative (Auth:DevHeaders = true, Development env) ==
+u -> api : X-User-Id, X-Tenant-Id, X-Roles: crm-sales
+note right of api : Selected by the "Smart" policy scheme\nwhen the X-User-Id header is present.\nOff by default; never enable in shared environments.
+
+== Service accounts ==
+note over kc, db
+  crm-worker / erp-worker are service accounts (role integration-service, audience limited to their own API).
+  They carry no tenant_id, so they cannot call tenant-scoped CRM endpoints.
+  Temporal activities instead receive tenantId in their input and call IntegrationService in-process (no HTTP, no token).
+end note
+@enduml

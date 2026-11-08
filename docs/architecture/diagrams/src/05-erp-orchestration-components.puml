@@ -1,0 +1,47 @@
+@startuml 05-erp-orchestration-components
+!include _style.puml
+title ERP and orchestration: components
+
+package "temporal/workflows  (OrchestrationWorker, queue 'orchestration')" as orch {
+  [CustomerOnboardingWorkflowImpl] as w1
+  [QuoteToOrderWorkflowImpl] as w2
+  [ReturnProcessingWorkflowImpl\n(signal goodsReceived)] as w3
+}
+
+package "erp  (Spring Boot, queue 'erp')" as erp {
+  package "integration (Temporal activities)" {
+    [ErpCustomerActivitiesImpl\nerp.validate-and-create-customer] as a1
+    [ErpOrderActivitiesImpl\nerp.create-order-with-reservation\nerp.cancel-order] as a2
+    [ErpReturnActivitiesImpl\nerp.authorize-return\nerp.complete-return] as a3
+    [TemporalWorkerConfig\n(temporal.enabled)] as cfg
+  }
+  package "domain services" {
+    [ErpCustomerService\n+ CustomerValidator (pure)] as s1
+    [ErpOrderService\n+ OrderPlanner (pure)] as s2
+    [ErpReturnService\n+ ReturnPlanner (pure)] as s3
+  }
+}
+database "erp-db\n(Flyway V1-V3)" as db
+
+cloud "CRM worker\nqueue 'crm'" as crm
+
+w1 --> a1 : activity
+w2 --> a2 : activity
+w3 --> a3 : activity
+w1 ..> crm : crm.record-erp-customer\ncrm.mark-sync-failed
+w2 ..> crm : crm.record-erp-order\ncrm.mark-order-failed
+w3 ..> crm : crm.record-return-decision
+a1 --> s1
+a2 --> s2
+a3 --> s3
+cfg ..> a1
+cfg ..> a2
+cfg ..> a3
+s1 --> db
+s2 --> db
+s3 --> db
+note bottom of erp
+  No REST business endpoints and no JWT validation yet
+  (only /api/v1/health). Plain Spring JDBC; Foundgine Java is not wired in.
+end note
+@enduml

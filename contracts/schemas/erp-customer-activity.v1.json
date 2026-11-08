@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://enterprise.example/schemas/erp-customer-activity.v1.json",
+  "title": "erp.validate-and-create-customer (queue: erp)",
+  "description": "Input is customer-sync.v1.json. Idempotent on (tenantId, crmCustomerId): a duplicate or a later attempt returns the existing ERP customer with created=false. Validation failures raise a non-retryable ApplicationFailure of type 'ValidationFailed'; anything else is retried by the workflow.",
+  "type": "object",
+  "required": ["erpCustomerId", "created"],
+  "additionalProperties": false,
+  "properties": {
+    "erpCustomerId": { "type": "string", "description": "ERP-owned id (e.g. ERP-9001). Never derived from the CRM id." },
+    "created": { "type": "boolean" }
+  }
+}

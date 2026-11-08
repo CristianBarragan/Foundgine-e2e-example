@@ -1,0 +1,25 @@
+@startuml 18-seq-reconcile
+!include _style.puml
+title Recovery of failed customer synchronisation
+autonumber
+actor "crm-admin" as a
+participant "Crm.Api" as api
+participant "AdminAudit filter" as au
+participant "IntegrationService" as is
+database "crm-db" as db
+participant "OutboxPublisher" as pub
+participant "Temporal" as t
+
+a -> api : POST /api/v1/integration/reconcile?olderThanMinutes=15
+api -> au : endpoint filter (after authorization)
+au -> is : ReconcileAsync(tenant, olderThan)
+is -> db : mappings with status Failed,\nor Pending older than olderThan\nattempt = attempt + 1 -> Pending\nINSERT outbox OnboardingRequested(attempt)
+au -> db : INSERT admin_audit (separate connection,\ncorrelation id included)
+api --> a : count re-queued
+pub -> t : start CustomerOnboarding:<tenant>:<id>:<attempt>
+note right of t : New attempt number = new workflow id,\nso RejectDuplicate does not block the retry.\nERP create is idempotent (tenant + CRM id).
+note over a, t
+  Not yet available: reconcile endpoint for returns, retry of OrderFailed quotes.
+  Fulfilment mirrors are re-pushed by ERP workflows instead.
+end note
+@enduml

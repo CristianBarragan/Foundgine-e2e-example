@@ -1,0 +1,25 @@
+@startuml 09-state-quote
+!include _style.puml
+title Quote lifecycle (CRM; every transition is a conditional UPDATE on the expected status)
+
+[*] --> Draft : POST /opportunities/{id}/quotes
+Draft --> Draft : PUT /quotes/{id}/lines
+Draft --> Approved : submit\n(total <= Quotes:ApprovalThreshold, default 10000)
+Draft --> PendingApproval : submit\n(total > threshold)
+PendingApproval --> Approved : approve\n(admin, not the submitter)
+PendingApproval --> Rejected : reject\n(admin, not the submitter)
+Approved --> Accepted : accept\n(needs Active customer mapping)\nopportunity -> ClosedWon\noutbox QuoteAccepted (one tx)
+Accepted --> Ordered : crm.record-erp-order\n(sets erp_order_id)
+Accepted --> OrderFailed : crm.mark-order-failed\n(reason, max 500 chars)
+Ordered --> Ordered : returns, shipments,\ninvoices, payments attach
+Rejected --> [*]
+OrderFailed --> [*]
+note right of OrderFailed
+  No retry/reopen path yet (decisions item 20).
+  Find with: SELECT ... FROM quotes WHERE status='OrderFailed'
+end note
+note right of Ordered
+  mark-order-failed on an Ordered quote is a conflict:
+  an ERP order exists and is never overwritten.
+end note
+@enduml

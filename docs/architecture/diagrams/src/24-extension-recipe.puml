@@ -1,0 +1,17 @@
+@startuml 24-extension-recipe
+!include _style.puml
+title Recipe: adding a new cross-system flow
+start
+:1. Write the JSON Schema(s)\ncontracts/schemas/<flow>.v1.json\n(schemaVersion, tenantId, correlationId, business key);
+:2. CRM side: migration NNN_*.sql\n(state column + CHECK, unique business key);
+:3. CRM service: conditional UPDATE state change\n+ Outbox.Enqueue in the SAME transaction;
+:4. Outbox: new type + IWorkflowStarter.Start*\n(workflow id <Flow>:<tenant>:<key>, RejectDuplicate);
+:5. ERP side: Flyway V<N>__*.sql,\nservice with ONE atomic transaction + inbox/unique key;
+:6. ERP activity (queue erp), name 'erp.<verb>-<noun>';\nbusiness refusals = non-retryable ApplicationFailure types;
+:7. CRM activity (queue crm) 'crm.record-*' / 'crm.mark-*-failed':\nidempotent, conflict on a different id;
+:8. Workflow in temporal/workflows:\nretry policy, do-not-retry list, compensation in a detached scope,\nquery 'status';
+:9. Register workflow in OrchestrationWorker,\nactivities in the ERP/CRM worker config;
+:10. Tests: pure planner, service+DB, workflow test env,\nCRM API test with fake IWorkflowStarter;
+:11. Docs: sequence diagram in diagrams/src, decisions.md entry;
+stop
+@enduml

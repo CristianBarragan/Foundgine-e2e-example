@@ -1,0 +1,35 @@
+@startwbs 22-status-roadmap
+!include _style.puml
+title Implementation status by plan phase (from docs/decisions.md; nothing has been compiled)
+<style>
+wbsDiagram {
+  .done { BackgroundColor #BBF7D0 }
+  .partial { BackgroundColor #FEF08A }
+  .todo { BackgroundColor #FECACA }
+}
+</style>
+* Enterprise platform
+** P1 Foundation <<done>>
+*** monorepo, compose, CI, conventions <<done>>
+** P2 Identity <<partial>>
+*** Keycloak realm + CRM JWT <<done>>
+*** ERP JWT, secret rotation <<todo>>
+** P3 CRM foundation <<done>>
+** P4 ERP foundation <<partial>>
+*** customer, order, return services <<done>>
+*** REST endpoints, product/inventory admin <<todo>>
+** P5 Temporal <<partial>>
+*** 3 workflows, 2 worker hosts <<done>>
+*** workflow tests never run; signal authorization missing <<todo>>
+** P6 Customer integration <<done>>
+** P7 Sales and orders <<partial>>
+*** quote-to-order + compensation <<done>>
+*** QuoteApproval/OrderCancellation workflows, tax <<todo>>
+** P8 Fulfilment and finance <<partial>>
+*** CRM mirrors + returns <<done>>
+*** shipment/invoice/payment/replenishment workflows <<todo>>
+** P9 Reliability <<partial>>
+*** audit, rate limit, correlation, OTel (CRM) <<done>>
+*** backup, alerting, Java-side tracing <<todo>>
+** P10 Production deployment <<todo>>
+@endwbs

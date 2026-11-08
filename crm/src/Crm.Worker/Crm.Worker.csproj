@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Crm.Worker</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Foundgine.Extensions" Version="3.3.3" />
+    <PackageReference Include="Temporalio" Version="[1.21.1,2.0.0)" />
+    <PackageReference Include="Temporalio.Extensions.Hosting" Version="[1.18.0,2.0.0)" />
+    <!-- Shared API contracts and Foundgine process definitions are compiled into both API and worker. -->
+    <Compile Include="../Crm.Api/Integration/FoundgineProcesses.cs" Link="FoundgineProcesses.cs" />
+    <Compile Include="../Crm.Api/Integration/CustomerToCashContracts.cs" Link="CustomerToCashContracts.cs" />
+    <Compile Include="../Crm.Api/Integration/FulfilmentContracts.cs" Link="FulfilmentContracts.cs" />
+  </ItemGroup>
+</Project>
