@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Foundgine.Extensions carries Foundgine.Extensions.Temporal (process model, operations, outbox bridge). -->
+    <PackageReference Include="Foundgine.Extensions" Version="2.3.1" />
+  </ItemGroup>
+</Project>

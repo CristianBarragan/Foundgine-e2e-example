@@ -1,0 +1,89 @@
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: crm
+      POSTGRES_PASSWORD: crm-local-only
+      POSTGRES_DB: crm
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init-keycloak-db.sql:/docker-entrypoint-initdb.d/01-keycloak.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crm -d crm"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.3
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: change-me-now
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: crm
+      KC_DB_PASSWORD: crm-local-only
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "false"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./infra/keycloak/realm-foundgine-crm.json:/opt/keycloak/data/import/foundgine-crm-realm.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  migrations:
+    build:
+      context: ./backend.Migrations
+    environment:
+      ConnectionStrings__Crm: Host=postgres;Port=5432;Database=crm;Username=crm;Password=crm-local-only
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build:
+      context: ./backend
+      args:
+        ENABLE_NATIVE_AOT: ${ENABLE_NATIVE_AOT:-false}
+      target: ${API_IMAGE_TARGET:-jit}
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__Crm: Host=postgres;Port=5432;Database=crm;Username=crm;Password=crm-local-only
+      Keycloak__Authority: http://keycloak:8080/realms/foundgine-crm
+      Keycloak__MetadataAddress: http://keycloak:8080/realms/foundgine-crm/.well-known/openid-configuration
+      Keycloak__ValidIssuer: http://localhost:8080/realms/foundgine-crm
+      Keycloak__Audience: crm-api
+      Keycloak__RequireHttpsMetadata: "false"
+      Ai__ApiKey: ${OPENAI_API_KEY:-}
+      Ai__Model: ${OPENAI_MODEL:-gpt-4.1-mini}
+      Ai__Endpoint: ${OPENAI_CHAT_COMPLETIONS_URL:-https://api.openai.com/v1/chat/completions}
+    ports:
+      - "5080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+      keycloak:
+        condition: service_started
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        VITE_KEYCLOAK_URL: http://localhost:8080
+        VITE_API_BASE: http://localhost:5080
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+      - keycloak
+
+volumes:
+  postgres_data:

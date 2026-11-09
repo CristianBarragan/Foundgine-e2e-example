@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.foundgine.example/events/inventory-reservation-release-requested.v1.schema.json",
+  "title": "InventoryReservationReleaseRequested v1",
+  "allOf": [
+    {
+      "$ref": "event-envelope.v1.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "eventType": {
+          "const": "com.foundgine.crm.inventory-reservation-release-requested.v1"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "commercialOrderId",
+            "reservationReference",
+            "reason",
+            "idempotencyKey"
+          ],
+          "properties": {
+            "commercialOrderId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "reservationReference": {
+              "type": "string",
+              "minLength": 1
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            },
+            "idempotencyKey": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    }
+  ]
+}

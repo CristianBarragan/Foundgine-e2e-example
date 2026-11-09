@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<classpath>
+	<classpathentry kind="con" path="org.eclipse.jdt.launching.JRE_CONTAINER"/>
+	<classpathentry kind="src" path="applications/erp-java/src/main/java"/>
+	<classpathentry kind="src" path="applications/erp-java/src/test/java"/>
+	<classpathentry kind="src" path="applications/erp-java/target/generated-sources/annotations"/>
+	<classpathentry kind="lib" path="applications/erp-java/target/foundgine-sample-supply-chain-advanced-3.2.2.jar"/>
+	<classpathentry kind="output" path="applications/erp-java/target/classes"/>
+</classpath>
