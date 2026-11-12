@@ -1,9 +1,0 @@
-aws_region         = "ap-southeast-2"
-project_name       = "foundgine-crm"
-environment        = "production"
-# For a real production deployment, provide a DNS name and an ACM certificate in this region.
-# domain_name       = "crm.example.com"
-# certificate_arn   = "arn:aws:acm:ap-southeast-2:123456789012:certificate/xxxx"
-# Size up/down to match expected usage and budget.
-db_instance_class  = "db.t4g.micro"
-db_allocated_storage = 30

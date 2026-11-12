@@ -1,0 +1,114 @@
+@startuml 06-crm-data-model
+!include _style.puml
+hide circle
+skinparam linetype ortho
+title CRM data model (PostgreSQL, migrations 001-006); every table carries tenant_id
+
+entity customers {
+  * customer_id : int <<PK>>
+  --
+  tenant_id
+  kind : Business | Individual
+  name, email (unique per tenant, ci), phone
+  status : Active | Inactive
+  created_/updated_ at, by
+}
+entity contacts {
+  * contact_id : int <<PK>>
+  --
+  customer_id <<FK>>
+  first_name, last_name, email, phone
+  is_primary
+}
+entity customer_integration_mappings {
+  * crm_customer_id : int <<PK,FK>>
+  --
+  erp_customer_id (unique per tenant when set)
+  status : Pending | Active | Failed
+  attempt, last_error
+}
+entity outbox_messages {
+  * id : uuid <<PK>>
+  --
+  type, aggregate_id, attempt
+  payload : jsonb
+  published_at, publish_attempts
+  next_attempt_at, last_error
+}
+entity opportunities {
+  * opportunity_id : int <<PK>>
+  --
+  customer_id <<FK>>
+  name, amount
+  stage : Prospecting..Negotiation | ClosedWon | ClosedLost
+}
+entity quotes {
+  * quote_id : int <<PK>>
+  --
+  opportunity_id <<FK>>, customer_id <<FK>>
+  status : Draft | PendingApproval | Approved |\nRejected | Accepted | Ordered | OrderFailed
+  total, submitted_by, decided_by
+  erp_order_id (unique per tenant when set)
+  order_failure_reason
+}
+entity quote_lines {
+  * quote_line_id : int <<PK>>
+  --
+  quote_id <<FK>>
+  sku, description, quantity > 0, unit_price >= 0
+}
+entity shipments {
+  * (tenant_id, erp_shipment_id) <<PK>>
+  --
+  quote_id <<FK>>, erp_order_id
+  status, carrier, tracking_number
+  version
+}
+entity invoices {
+  * (tenant_id, erp_invoice_id) <<PK>>
+  --
+  quote_id <<FK>>, customer_id <<FK>>
+  number, total, status, issued_at, due_at
+  version
+}
+entity payments {
+  * (tenant_id, erp_payment_id) <<PK>>
+  --
+  quote_id <<FK>>, erp_invoice_id
+  amount, status, version
+}
+entity return_requests {
+  * return_id : int <<PK>>
+  --
+  quote_id <<FK>>, customer_id <<FK>>
+  status : Requested | Authorized | Rejected | Completed
+  reason, erp_return_id (unique per tenant when set)
+  decision_note, requested_by
+}
+entity return_request_lines {
+  * return_line_id : int <<PK>>
+  --
+  return_id <<FK>>
+  sku, quantity
+}
+entity admin_audit {
+  * append-only (migration 005)
+  --
+  tenant, user, action, outcome
+  correlation id
+}
+
+customers ||--o{ contacts
+customers ||--o| customer_integration_mappings
+customers ||--o{ opportunities
+opportunities ||--o{ quotes
+customers ||--o{ quotes
+quotes ||--o{ quote_lines
+quotes ||--o{ shipments
+quotes ||--o{ invoices
+quotes ||--o{ payments
+quotes ||--o{ return_requests
+return_requests ||--o{ return_request_lines
+customers ||--o{ return_requests
+customers ||--o{ invoices
+@enduml

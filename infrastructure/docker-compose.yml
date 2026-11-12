@@ -1,0 +1,44 @@
+name: enterprise-platform
+services:
+  crm-db:
+    image: postgres:17
+    environment: { POSTGRES_DB: crm, POSTGRES_USER: crm, POSTGRES_PASSWORD: "${CRM_DB_PASSWORD:-crm_dev_pw}" }
+    ports: ["5433:5432"]
+    volumes: [crm-db-data:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U crm -d crm"], interval: 5s, timeout: 3s, retries: 20 }
+  erp-db:
+    image: postgres:17
+    environment: { POSTGRES_DB: erp, POSTGRES_USER: erp, POSTGRES_PASSWORD: "${ERP_DB_PASSWORD:-erp_dev_pw}" }
+    ports: ["5434:5432"]
+    volumes: [erp-db-data:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U erp -d erp"], interval: 5s, timeout: 3s, retries: 20 }
+  temporal-db:
+    image: postgres:17
+    environment: { POSTGRES_USER: temporal, POSTGRES_PASSWORD: "${TEMPORAL_DB_PASSWORD:-temporal_dev_pw}" }
+    volumes: [temporal-db-data:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U temporal"], interval: 5s, timeout: 3s, retries: 20 }
+  temporal:
+    image: temporalio/auto-setup:1.25
+    depends_on: { temporal-db: { condition: service_healthy } }
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: "${TEMPORAL_DB_PASSWORD:-temporal_dev_pw}"
+      POSTGRES_SEEDS: temporal-db
+      DEFAULT_NAMESPACE: enterprise
+    ports: ["7233:7233"]
+  temporal-ui:
+    image: temporalio/ui:2.31.2
+    depends_on: [temporal]
+    environment: { TEMPORAL_ADDRESS: "temporal:7233", TEMPORAL_CORS_ORIGINS: "http://localhost:8233" }
+    ports: ["8233:8080"]
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: "${KEYCLOAK_ADMIN:-admin}"
+      KC_BOOTSTRAP_ADMIN_PASSWORD: "${KEYCLOAK_ADMIN_PASSWORD:-admin}"
+    volumes: ["./keycloak:/opt/keycloak/data/import:ro"]
+    ports: ["8080:8080"]
+volumes: { crm-db-data: {}, erp-db-data: {}, temporal-db-data: {} }

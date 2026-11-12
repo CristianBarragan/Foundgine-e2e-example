@@ -1,0 +1,23 @@
+@startuml 17-seq-fulfilment-mirror
+!include _style.puml
+title Fulfilment mirrors: ERP facts pushed to CRM (contract exists; ERP producers not yet written)
+autonumber
+participant "ERP fulfilment workflow\n(NOT IMPLEMENTED)" as w #FEE2E2
+participant "CRM worker\n(queue crm)" as crmw
+participant "FulfilmentService" as fs
+database "crm-db" as db
+actor "Any CRM role" as u
+
+w -> crmw : crm.record-shipment | record-invoice | record-payment\n{tenantId, erp ids, status, version}
+crmw -> fs : upsert
+fs -> db : resolve quote via quotes.erp_order_id
+alt unknown ERP order
+  fs --> crmw : CrmNotFoundException
+  note right : Workflow retry covers the case where\nthe order is recorded a moment later.
+else known
+  fs -> db : INSERT ... ON CONFLICT (tenant_id, erp_*_id)\nDO UPDATE ... WHERE incoming version > stored version
+  note right of db : Duplicate = no-op. Stale or out-of-order = ignored.\nStatus never moves backwards.
+end
+u -> fs : GET /quotes/{id}/fulfilment, GET /customers/{id}/invoices
+fs -> db : tenant-scoped reads
+@enduml

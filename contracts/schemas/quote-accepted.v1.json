@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://enterprise.example/schemas/quote-accepted.v1.json",
+  "title": "QuoteAccepted (workflow input of QuoteToOrderWorkflow)",
+  "type": "object",
+  "required": ["schemaVersion", "tenantId", "quoteId", "opportunityId", "crmCustomerId", "erpCustomerId", "correlationId", "total", "lines"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "tenantId": { "type": "string" },
+    "quoteId": { "type": "integer", "description": "CRM quote id; with tenantId it is the idempotency key for exactly-one ERP order." },
+    "opportunityId": { "type": "integer" },
+    "crmCustomerId": { "type": "integer" },
+    "erpCustomerId": { "type": "string", "description": "From the Active integration mapping." },
+    "correlationId": { "type": "string" },
+    "total": { "type": "number" },
+    "lines": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "required": ["sku", "quantity", "unitPrice"], "additionalProperties": false,
+        "properties": {
+          "sku": { "type": "string" }, "description": { "type": "string" },
+          "quantity": { "type": "integer", "minimum": 1 }, "unitPrice": { "type": "number", "minimum": 0 }
+        }
+      }
+    }
+  }
+}

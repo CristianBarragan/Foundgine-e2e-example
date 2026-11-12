@@ -1,0 +1,34 @@
+@startuml 16-seq-outbox
+!include _style.puml
+title Transactional outbox: publish at-least-once, start workflow exactly once
+autonumber
+participant "Business service\n(e.g. QuoteService)" as svc
+database "crm-db" as db
+participant "OutboxPublisherService\n(BackgroundService)" as loop
+participant "OutboxPublisher" as pub
+participant "TemporalWorkflowStarter" as st
+participant "Temporal" as t
+
+svc -> db : BEGIN\nbusiness change\nINSERT outbox_messages(type, payload, next_attempt_at = now)\nCOMMIT
+note right of db : Either both rows exist or neither does.
+
+loop forever
+  loop -> pub : PublishBatchAsync(20)
+  pub -> db : BEGIN; SELECT ... WHERE published_at IS NULL\nAND next_attempt_at <= now()\nORDER BY created_at LIMIT 20\nFOR UPDATE SKIP LOCKED
+  note right of db : SKIP LOCKED lets several CRM replicas\npublish disjoint batches.
+  loop each row
+    pub -> st : Start*(dto) by row.type
+    alt started, or already started (idempotent)
+      st -> t : StartWorkflow(id, RejectDuplicate)
+      pub -> db : UPDATE published_at = now()
+    else exception
+      pub -> db : publish_attempts++\nnext_attempt_at = now + min(300, 2^attempts) s\nlast_error
+    end
+  end
+  pub -> db : COMMIT
+  alt nothing published
+    loop -> loop : delay 2 s
+  end
+end
+note over pub, t : Types: OnboardingRequested, QuoteAccepted, ReturnRequested.\nMetrics: crm.outbox.published, crm.outbox.publish_failed.
+@enduml

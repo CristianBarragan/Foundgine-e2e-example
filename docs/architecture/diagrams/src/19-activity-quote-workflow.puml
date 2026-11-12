@@ -1,0 +1,29 @@
+@startuml 19-activity-quote-workflow
+!include _style.puml
+title QuoteToOrderWorkflow decision flow
+start
+:status = CreatingErpOrder;
+:erp.create-order-with-reservation\n(retry max 10, 1s x2 up to 1 min,\nno retry: ValidationFailed, InsufficientStock);
+if (ERP activity failed?) then (yes)
+  :markFailed(reason)\ncrm.mark-order-failed\n(detached scope, best effort);
+  :result Failed;
+  stop
+else (no)
+endif
+:status = RecordingInCrm;
+:crm.record-erp-order\n(unlimited retries; no retry: CrmNotFound,\nCrmValidation, CrmConflict);
+if (CRM refused permanently?) then (yes)
+  :status = Compensating;
+  :erp.cancel-order\n(detached scope; unlimited retries;\nrelease reservation);
+  :markFailed("CRM rejected the order\n(ERP order cancelled)");
+  :result Failed;
+  stop
+else (no)
+  :result Completed(erpOrderId);
+  stop
+endif
+note right
+  Query 'status' exposes the current step.
+  No tokens or secrets pass through workflow history.
+end note
+@enduml

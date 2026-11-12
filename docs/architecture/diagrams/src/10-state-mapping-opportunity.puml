@@ -1,0 +1,27 @@
+@startuml 10-state-mapping-opportunity
+!include _style.puml
+title Customer integration mapping and opportunity stages
+
+state "Customer mapping" as M {
+  [*] --> Pending : customer created\n(mapping + outbox in one tx)
+  Pending --> Active : crm.record-erp-customer
+  Pending --> Failed : crm.mark-sync-failed
+  Failed --> Pending : POST /integration/reconcile\n(attempt + 1, new workflow id)
+  Pending --> Pending : reconcile re-queues if older than\nolderThanMinutes (default 15)
+  Active --> Active : same ERP id again = no-op\ndifferent ERP id = conflict
+}
+
+state "Opportunity stage" as O {
+  [*] --> Prospecting
+  Prospecting --> Qualification
+  Qualification --> Proposal
+  Proposal --> Negotiation
+  Prospecting --> ClosedLost
+  Qualification --> ClosedLost
+  Proposal --> ClosedLost
+  Negotiation --> ClosedLost
+  Negotiation --> ClosedWon : only via quote accept
+  Proposal --> ClosedWon : only via quote accept
+}
+note bottom of O : One step forward at a time; ClosedWon is set only by accepting a quote.
+@enduml

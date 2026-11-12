@@ -1,0 +1,29 @@
+@startuml 11-state-return-fulfilment
+!include _style.puml
+title Return request (CRM-owned, ERP decides) and mirrored fulfilment statuses
+
+state "return_requests.status" as R {
+  [*] --> Requested : POST /quotes/{id}/returns\n(+ outbox ReturnRequested)
+  Requested --> Authorized : crm.record-return-decision\n(needs erpReturnId)
+  Requested --> Rejected : decision Rejected (note)
+  Authorized --> Completed : goodsReceived signal ->\nerp.complete-return -> decision Completed
+  Authorized --> Authorized : 30 days without signal\n(workflow result AwaitingGoodsExpired)
+}
+
+state "Mirrors (ERP is source of truth; version must increase)" as F {
+  state "shipments" as S1
+  state "invoices" as I1
+  state "payments" as P1
+  [*] --> S1
+  S1 : Packed > Shipped > InTransit > Delivered | Cancelled
+  [*] --> I1
+  I1 : Issued > PartiallyPaid > Paid | Overdue | Void
+  [*] --> P1
+  P1 : Received > Reconciled | Reversed
+}
+note bottom of F
+  Upsert applies only if incoming version > stored version:
+  duplicates are no-ops, stale or out-of-order deliveries are ignored.
+  ERP producers for these are NOT implemented yet.
+end note
+@enduml

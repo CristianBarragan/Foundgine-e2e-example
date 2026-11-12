@@ -1,0 +1,337 @@
+{
+  "realm": "enterprise",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "accessTokenLifespan": 300,
+  "attributes": {
+    "unmanagedAttributePolicy": "ENABLED"
+  },
+  "roles": {
+    "realm": [
+      {
+        "name": "enterprise-admin"
+      },
+      {
+        "name": "crm-admin"
+      },
+      {
+        "name": "crm-sales"
+      },
+      {
+        "name": "crm-support"
+      },
+      {
+        "name": "erp-admin"
+      },
+      {
+        "name": "erp-sales"
+      },
+      {
+        "name": "erp-inventory"
+      },
+      {
+        "name": "erp-finance"
+      },
+      {
+        "name": "integration-service"
+      }
+    ]
+  },
+  "clientScopes": [
+    {
+      "name": "enterprise-claims",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "false",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true",
+            "claim.name": "roles",
+            "multivalued": "true",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "tenant_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true",
+            "user.attribute": "tenant_id",
+            "claim.name": "tenant_id",
+            "jsonType.label": "String"
+          }
+        }
+      ]
+    },
+    {
+      "name": "audience-crm-api",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "false",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "audience-crm-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true",
+            "included.client.audience": "crm-api"
+          }
+        }
+      ]
+    },
+    {
+      "name": "audience-erp-api",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "false",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "audience-erp-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true",
+            "included.client.audience": "erp-api"
+          }
+        }
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "crm-api",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": true,
+      "defaultClientScopes": [
+        "basic",
+        "profile",
+        "email",
+        "roles",
+        "enterprise-claims"
+      ],
+      "secret": "crm-api-dev-secret",
+      "bearerOnly": true
+    },
+    {
+      "clientId": "erp-api",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": true,
+      "defaultClientScopes": [
+        "basic",
+        "profile",
+        "email",
+        "roles",
+        "enterprise-claims"
+      ],
+      "secret": "erp-api-dev-secret",
+      "bearerOnly": true
+    },
+    {
+      "clientId": "enterprise-web",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": true,
+      "defaultClientScopes": [
+        "basic",
+        "profile",
+        "email",
+        "roles",
+        "enterprise-claims",
+        "audience-crm-api",
+        "audience-erp-api"
+      ],
+      "redirectUris": [
+        "http://localhost:*"
+      ],
+      "webOrigins": [
+        "+"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      }
+    },
+    {
+      "clientId": "crm-worker",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "fullScopeAllowed": true,
+      "defaultClientScopes": [
+        "basic",
+        "roles",
+        "enterprise-claims",
+        "audience-crm-api"
+      ],
+      "secret": "crm-worker-dev-secret"
+    },
+    {
+      "clientId": "erp-worker",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "fullScopeAllowed": true,
+      "defaultClientScopes": [
+        "basic",
+        "roles",
+        "enterprise-claims",
+        "audience-erp-api"
+      ],
+      "secret": "erp-worker-dev-secret"
+    }
+  ],
+  "users": [
+    {
+      "username": "alice",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "alice@example.test",
+      "firstName": "Alice",
+      "lastName": "Dev",
+      "attributes": {
+        "tenant_id": [
+          "acme"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "dev-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "crm-sales"
+      ]
+    },
+    {
+      "username": "bob",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "bob@example.test",
+      "firstName": "Bob",
+      "lastName": "Dev",
+      "attributes": {
+        "tenant_id": [
+          "acme"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "dev-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "crm-support"
+      ]
+    },
+    {
+      "username": "carol",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "carol@example.test",
+      "firstName": "Carol",
+      "lastName": "Dev",
+      "attributes": {
+        "tenant_id": [
+          "globex"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "dev-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "crm-admin"
+      ]
+    },
+    {
+      "username": "dave",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "dave@example.test",
+      "firstName": "Dave",
+      "lastName": "Dev",
+      "attributes": {
+        "tenant_id": [
+          "acme"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "dev-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "enterprise-admin"
+      ]
+    },
+    {
+      "username": "service-account-crm-worker",
+      "enabled": true,
+      "serviceAccountClientId": "crm-worker",
+      "realmRoles": [
+        "integration-service"
+      ]
+    },
+    {
+      "username": "service-account-erp-worker",
+      "enabled": true,
+      "serviceAccountClientId": "erp-worker",
+      "realmRoles": [
+        "integration-service"
+      ]
+    }
+  ]
+}

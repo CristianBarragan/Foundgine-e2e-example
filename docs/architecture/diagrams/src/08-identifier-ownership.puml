@@ -1,0 +1,31 @@
+@startuml 08-identifier-ownership
+!include _style.puml
+title Identifier ownership: never interchangeable, always mapped
+
+rectangle "CRM owns" as c #E0F2FE {
+  card "customer_id (int)" as cc
+  card "quote_id (int)" as cq
+  card "return_id (int)" as cr
+}
+rectangle "ERP owns" as e #DCFCE7 {
+  card "erp_customer_id  ERP-9001..." as ec
+  card "erp_order_id  5001..." as eo
+  card "erp_return_id  7001..." as er
+}
+rectangle "Integration keys" as k #FEF9C3 {
+  card "customer_integration_mappings\n(crm_customer_id <-> erp_customer_id)" as m
+  card "quotes.erp_order_id\n+ sales_orders.crm_quote_id" as qo
+  card "return_requests.erp_return_id\n+ erp_returns.crm_return_id" as rr
+}
+cc -- m
+ec -- m
+cq -- qo
+eo -- qo
+cr -- rr
+er -- rr
+note bottom of k
+  Every cross-service call carries tenantId, a correlationId and an idempotency key.
+  Workflow ids: <Workflow>:<tenant>:<business-key>  (RejectDuplicate).
+  ERP inboxes are keyed by (tenant_id, correlation_id).
+end note
+@enduml

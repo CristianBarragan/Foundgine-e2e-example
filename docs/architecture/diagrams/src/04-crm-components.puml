@@ -1,0 +1,81 @@
+@startuml 04-crm-components
+!include _style.puml
+title Crm.Api: components and request pipeline
+
+package "HTTP pipeline (Program.cs order)" {
+  [CorrelationMiddleware\nX-Correlation-Id] as corr
+  [Exception handler\nCrmExceptionHandler -> ProblemDetails] as exh
+  [Authentication\nSmart scheme: JWT bearer\n(or DevHeaders if enabled)] as authn
+  [Rate limiter\nfixed window per tenant/IP] as rl
+  [Authorization\nroles -> crm.read / crm.write / crm.admin] as authz
+}
+corr --> exh
+exh --> authn
+authn --> rl
+rl --> authz
+
+package "Api" {
+  [CrmEndpoints\nMapGroup /api/v1] as ep
+  [AdminAudit endpoint filter\napprove, reject, reconcile] as auditf
+}
+authz --> ep
+ep --> auditf
+
+package "Application services (tenant scoping lives here)" {
+  [CustomerService] as cs
+  [ContactService] as cts
+  [OpportunityService] as os
+  [QuoteService\nstate machine + accept] as qs
+  [FulfilmentService\nmirrors + returns] as fs
+  [IntegrationService\nmapping, reconcile, worker-side logic] as is
+  [TenantContext\ntenant_id + sub claims] as tc
+}
+ep --> cs
+ep --> cts
+ep --> os
+ep --> qs
+ep --> fs
+ep --> is
+cs ..> tc
+qs ..> tc
+
+package "Foundgine" {
+  [CrmDomain capability\nUseCrmDomain()] as fd
+  [CrmSemantics metadata\n(semantic model)] as sem
+  [Foundgine EF provider\n(vendored in crm/foundgine)] as ef
+}
+cs --> fd
+fd --> sem
+fd --> ef
+
+package "Integration" {
+  [Outbox\nEnqueue* in caller's tx] as ob
+  [OutboxPublisher\nFOR UPDATE SKIP LOCKED] as pub
+  [OutboxPublisherService\nBackgroundService, 2s idle poll] as pubs
+  [TemporalWorkflowStarter\nIWorkflowStarter] as wf
+  [CrmActivities\ncrm.* (hosted Temporal worker)] as act
+}
+cs --> ob
+qs --> ob
+fs --> ob
+pubs --> pub
+pub --> wf
+act --> is
+act --> fs
+act --> qs
+
+package "Infrastructure" {
+  [DatabaseMigrator\ndb/migrations/*.sql] as mig
+  [Telemetry\nmeter Crm.Api] as tel
+}
+
+database "crm-db" as db
+ef --> db
+ob --> db
+pub --> db
+mig --> db
+auditf --> db : admin_audit\n(separate connection)
+cloud "Temporal server" as t
+wf --> t : start workflow
+t --> act : activities (queue 'crm')
+@enduml

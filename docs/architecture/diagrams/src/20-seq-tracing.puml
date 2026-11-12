@@ -1,0 +1,27 @@
+@startuml 20-seq-tracing
+!include _style.puml
+title Correlation and distributed tracing (CRM side wired; Java side open)
+autonumber
+actor Client
+participant "CorrelationMiddleware" as cm
+participant "Crm.Api endpoint" as ep
+database "crm-db\n(outbox + admin_audit)" as db
+participant "Outbox publisher\n(Temporal client\nTracingInterceptor)" as pub
+participant "Temporal" as t
+participant "Orchestration / ERP workers" as jw #FEF3C7
+participant "CRM worker\n(TracingInterceptor)" as cw
+participant "OTLP collector" as o
+
+Client -> cm : X-Correlation-Id (optional)
+cm -> cm : sanitise or generate;\nadd to log scope + span tag correlation.id
+cm -> ep : continue
+ep -> db : business rows + outbox\n(correlationId in payload and audit rows)
+pub -> t : start workflow (trace context in Temporal headers)
+t -> jw : workflow + ERP activities
+note right of jw : Java must install the equivalent\nTemporal OpenTelemetry interceptor\nto join the same trace (open item).
+t -> cw : crm.* activity (context restored from headers)
+ep --> o : spans + metrics (when Telemetry:Enabled)
+pub --> o : spans
+cw --> o : spans
+cm --> Client : X-Correlation-Id echoed
+@enduml

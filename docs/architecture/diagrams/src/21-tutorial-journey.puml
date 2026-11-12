@@ -1,0 +1,30 @@
+@startuml 21-tutorial-journey
+!include _style.puml
+title Tutorial journey: from empty machine to a returned order
+|Setup|
+start
+:1. ./start.sh\n(Postgres x3, Temporal, Keycloak);
+:2. Start CRM (Temporal enabled);
+:3. Start ERP (--temporal.enabled=true);
+:4. Start OrchestrationWorker;
+:5. Seed ERP products + inventory (SQL);
+|Customer|
+:6. POST /customers;
+:7. Watch CustomerOnboarding in Temporal UI;
+:8. GET /customers/{id}/integration -> Active;
+|Sales|
+:9. Create opportunity;
+:10. Create quote with lines;
+:11. Submit (and approve as a different admin);
+:12. Accept;
+:13. Watch QuoteToOrder; quote -> Ordered;
+|Failure drills|
+:14. Out of stock, price below floor, worker down;
+|Returns|
+:15. POST /quotes/{id}/returns;
+:16. Send goodsReceived signal;
+:17. Check stock restored; return Completed;
+|Operate|
+:18. Reconcile, audit trail, outbox queries;
+stop
+@enduml

@@ -1,0 +1,80 @@
+@startuml 07-erp-data-model
+!include _style.puml
+hide circle
+skinparam linetype ortho
+title ERP data model (PostgreSQL, Flyway V1-V3)
+
+entity erp_customers {
+  * erp_customer_id : varchar <<PK>>  (seq from 9001)
+  --
+  tenant_id, crm_customer_id
+  kind, name, email, phone, status
+  UNIQUE (tenant_id, crm_customer_id)
+}
+entity customer_inbox {
+  * (tenant_id, correlation_id) <<PK>>
+  --
+  crm_customer_id, erp_customer_id <<FK>>, attempt
+}
+entity erp_products {
+  * (tenant_id, sku) <<PK>>
+  --
+  name, list_price
+  min_unit_price <= list_price
+  status : Active | Discontinued
+}
+entity erp_inventory {
+  * (tenant_id, sku) <<PK,FK>>
+  --
+  on_hand >= 0
+  reserved >= 0
+  CHECK reserved <= on_hand
+}
+entity sales_orders {
+  * erp_order_id : varchar <<PK>>  (seq from 5001)
+  --
+  tenant_id, crm_quote_id
+  erp_customer_id <<FK>>
+  total, status : Open | Cancelled
+  cancel_reason, correlation_id
+  UNIQUE (tenant_id, crm_quote_id)
+}
+entity sales_order_lines {
+  * (erp_order_id, line_no) <<PK,FK>>
+  --
+  sku, quantity, unit_price
+}
+entity stock_reservations {
+  * (erp_order_id, sku) <<PK,FK>>
+  --
+  quantity, released
+}
+entity order_inbox {
+  * (tenant_id, correlation_id) <<PK>>
+  --
+  crm_quote_id, erp_order_id <<FK>>
+}
+entity erp_returns {
+  * erp_return_id : varchar <<PK>>  (seq from 7001)
+  --
+  tenant_id, crm_return_id
+  erp_order_id <<FK>>
+  status : Authorized | Rejected | Completed
+  reason, note
+  UNIQUE (tenant_id, crm_return_id)
+}
+entity erp_return_lines {
+  * (erp_return_id, sku) <<PK,FK>>
+  --
+  quantity
+}
+
+erp_customers ||--o{ customer_inbox
+erp_customers ||--o{ sales_orders
+erp_products ||--o| erp_inventory
+sales_orders ||--o{ sales_order_lines
+sales_orders ||--o{ stock_reservations
+sales_orders ||--o{ order_inbox
+sales_orders ||--o{ erp_returns
+erp_returns ||--o{ erp_return_lines
+@enduml

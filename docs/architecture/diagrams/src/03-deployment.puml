@@ -1,0 +1,33 @@
+@startuml 03-deployment
+!include _style.puml
+title Local development topology (docker compose + host processes)
+
+node "Developer machine" {
+  node "Host processes" as host {
+    component "Crm.Api\n:5000\n(dotnet run)" as crm
+    component "erp\n:8082\n(mvn spring-boot:run\n--temporal.enabled=true)" as erp
+    component "OrchestrationWorker\n(mvn exec:java)" as ow
+  }
+  node "docker compose  (infrastructure/docker-compose.yml, start.sh)" as dc {
+    database "crm-db\npostgres:17\nhost :5433" as crmdb
+    database "erp-db\npostgres:17\nhost :5434" as erpdb
+    database "temporal-db\npostgres:17\n(internal)" as tdb
+    component "temporal\nauto-setup:1.25\n:7233, ns=enterprise" as ts
+    component "temporal-ui\n:8233" as tui
+    component "keycloak 26 (start-dev)\n:8080, realm=enterprise" as kc
+  }
+}
+
+crm --> crmdb
+erp --> erpdb
+ts --> tdb
+tui --> ts
+crm ..> ts : queue 'crm'\n+ workflow start
+erp ..> ts : queue 'erp'
+ow ..> ts : queue 'orchestration'
+crm ..> kc : JWKS / discovery
+note bottom of dc
+  Dev-only: realm import with throwaway secrets,
+  default DB passwords from .env (.env.example).
+end note
+@enduml

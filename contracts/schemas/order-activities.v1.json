@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://enterprise.example/schemas/order-activities.v1.json",
+  "title": "ERP order activities (queue 'erp')",
+  "description": "erp.create-order-with-reservation takes quote-accepted.v1.json and returns ErpOrderResult. erp.cancel-order takes CancelOrderRequest and returns CancelOrderResult. Non-retryable failure types: ValidationFailed, InsufficientStock.",
+  "$defs": {
+    "ErpOrderResult": {
+      "type": "object", "required": ["erpOrderId", "created"], "additionalProperties": false,
+      "properties": { "erpOrderId": { "type": "string" }, "created": { "type": "boolean", "description": "false when the order already existed for this (tenant, quote)." } }
+    },
+    "CancelOrderRequest": {
+      "type": "object", "required": ["tenantId", "quoteId", "erpOrderId"], "additionalProperties": false,
+      "properties": { "tenantId": { "type": "string" }, "quoteId": { "type": "integer" }, "erpOrderId": { "type": "string" }, "reason": { "type": "string", "maxLength": 500 } }
+    },
+    "CancelOrderResult": {
+      "type": "object", "required": ["erpOrderId", "cancelled"], "additionalProperties": false,
+      "properties": { "erpOrderId": { "type": "string" }, "cancelled": { "type": "boolean", "description": "false when it was already cancelled." } }
+    }
+  }
+}

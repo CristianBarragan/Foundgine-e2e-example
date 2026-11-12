@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://enterprise.example/schemas/return-activities.v1.json",
+  "title": "ERP return activities (queue 'erp')",
+  "description": "erp.authorize-return takes return-requested.v1.json and returns ErpReturnDecision; erp.complete-return takes CompleteReturnRequest and returns CompleteReturnResult. The only non-retryable failure type is ValidationFailed (malformed request, unknown or Rejected return on complete). A business refusal is decision 'Rejected', not a failure. ReturnProcessingWorkflow also accepts the signal goodsReceived({receivedBy}).",
+  "$defs": {
+    "ErpReturnDecision": {
+      "type": "object", "required": ["decision", "erpReturnId", "note", "created"], "additionalProperties": false,
+      "properties": {
+        "decision": { "enum": ["Authorized", "Rejected"] },
+        "erpReturnId": { "type": "string", "description": "Empty when the order is unknown (nothing stored)." },
+        "note": { "type": "string", "description": "Rejection reason; empty when authorized." },
+        "created": { "type": "boolean", "description": "false on a replay." }
+      }
+    },
+    "CompleteReturnRequest": {
+      "type": "object", "required": ["tenantId", "erpReturnId"], "additionalProperties": false,
+      "properties": { "tenantId": { "type": "string" }, "erpReturnId": { "type": "string" } }
+    },
+    "CompleteReturnResult": {
+      "type": "object", "required": ["erpReturnId", "completed"], "additionalProperties": false,
+      "properties": { "erpReturnId": { "type": "string" }, "completed": { "type": "boolean", "description": "false when already completed; stock is added once." } }
+    },
+    "GoodsReceived": {
+      "type": "object", "required": ["receivedBy"], "additionalProperties": false,
+      "properties": { "receivedBy": { "type": "string", "description": "Informational only; signals are not authenticated yet." } }
+    }
+  }
+}

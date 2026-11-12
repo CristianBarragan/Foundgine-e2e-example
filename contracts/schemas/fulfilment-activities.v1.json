@@ -1,0 +1,191 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://enterprise.example/schemas/fulfilment-activities.v1.json",
+  "title": "Inputs of the CRM fulfilment activities (ERP -> CRM)",
+  "description": "All are idempotent upserts keyed by the ERP id. 'version' is assigned by the ERP, per entity, strictly increasing; the CRM ignores a version <= the stored one. An unknown erpOrderId fails with a retryable not-found (the CRM may not have recorded the order yet).",
+  "$defs": {
+    "recordShipment": {
+      "type": "object",
+      "required": [
+        "tenantId",
+        "erpOrderId",
+        "erpShipmentId",
+        "status",
+        "version"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "tenantId": {
+          "type": "string"
+        },
+        "erpOrderId": {
+          "type": "string"
+        },
+        "erpShipmentId": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "Packed",
+            "Shipped",
+            "InTransit",
+            "Delivered",
+            "Cancelled"
+          ]
+        },
+        "carrier": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "trackingNumber": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "recordInvoice": {
+      "type": "object",
+      "required": [
+        "tenantId",
+        "erpOrderId",
+        "erpInvoiceId",
+        "number",
+        "total",
+        "status",
+        "issuedAt",
+        "version"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "tenantId": {
+          "type": "string"
+        },
+        "erpOrderId": {
+          "type": "string"
+        },
+        "erpInvoiceId": {
+          "type": "string"
+        },
+        "number": {
+          "type": "string"
+        },
+        "total": {
+          "type": "number",
+          "minimum": 0
+        },
+        "status": {
+          "enum": [
+            "Issued",
+            "PartiallyPaid",
+            "Paid",
+            "Overdue",
+            "Void"
+          ]
+        },
+        "issuedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "dueAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "recordPayment": {
+      "type": "object",
+      "required": [
+        "tenantId",
+        "erpOrderId",
+        "erpInvoiceId",
+        "erpPaymentId",
+        "amount",
+        "status",
+        "version"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "tenantId": {
+          "type": "string"
+        },
+        "erpOrderId": {
+          "type": "string"
+        },
+        "erpInvoiceId": {
+          "type": "string"
+        },
+        "erpPaymentId": {
+          "type": "string"
+        },
+        "amount": {
+          "type": "number",
+          "minimum": 0
+        },
+        "status": {
+          "enum": [
+            "Received",
+            "Reconciled",
+            "Reversed"
+          ]
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "recordReturnDecision": {
+      "type": "object",
+      "required": [
+        "tenantId",
+        "returnId",
+        "decision"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "tenantId": {
+          "type": "string"
+        },
+        "returnId": {
+          "type": "integer"
+        },
+        "decision": {
+          "enum": [
+            "Authorized",
+            "Rejected",
+            "Completed"
+          ]
+        },
+        "erpReturnId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Required for Authorized."
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 500
+        }
+      }
+    }
+  }
+}
