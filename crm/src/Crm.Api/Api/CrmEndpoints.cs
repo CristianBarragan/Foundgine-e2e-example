@@ -14,7 +14,7 @@ public static class CrmEndpoints
         {
             subject = ctx.User.FindFirst("sub")?.Value,
             tenant = ctx.User.FindFirst(HttpTenantContext.TenantClaim)?.Value,
-            roles = ctx.User.FindAll("roles").Select(c => c.Value).ToArray()
+            roles = ctx.User.FindAll(System.Security.Claims.ClaimTypes.Role).Select(c => c.Value).ToArray()
         }));
 
         var customers = v1.MapGroup("/customers");
@@ -86,7 +86,7 @@ public static class CrmEndpoints
             Results.Ok(await s.GetFulfilmentAsync(id, ct))).RequireAuthorization(CrmRoles.ReadPolicy);
         customers.MapGet("{id:int}/invoices", async (int id, FulfilmentService s, CancellationToken ct) =>
             Results.Ok(await s.ListInvoicesForCustomerAsync(id, ct))).RequireAuthorization(CrmRoles.ReadPolicy);
-        quotes.MapPost("{id:int}/returns", async (int id, ReturnRequest r, FulfilmentService s, CancellationToken ct) =>
+        quotes.MapPost("{id:int}/returns", async (int id, ReturnRequestInput r, FulfilmentService s, CancellationToken ct) =>
         {
             var v = await s.RequestReturnAsync(id, r, ct);
             return Results.Created($"/api/v1/returns/{v.Return.Id}", v);
@@ -115,5 +115,23 @@ public static class CrmEndpoints
 
         v1.MapGet("/contacts/{id:int}", async (int id, ContactService s, CancellationToken ct) =>
             Results.Ok(await s.GetAsync(id, ct))).RequireAuthorization(CrmRoles.ReadPolicy);
+
+        // Cross-entity scenarios (read-only, tenant-scoped). See docs/insights.md.
+        v1.MapGet("/customers/{id:int}/360", async (int id, InsightsService s, CancellationToken ct) =>
+            Results.Ok(await s.Customer360Async(id, ct))).RequireAuthorization(CrmRoles.ReadPolicy);
+
+        var insights = v1.MapGroup("/insights").RequireAuthorization(CrmRoles.ReadPolicy);
+        insights.MapGet("/at-risk-customers", async (InsightsService s, CancellationToken ct) =>
+            Results.Ok(await s.AtRiskCustomersAsync(ct)));
+        insights.MapGet("/key-accounts", async (int? minOrders, InsightsService s, CancellationToken ct) =>
+            Results.Ok(await s.KeyAccountsAsync(minOrders ?? 3, ct)));
+        insights.MapGet("/integration-attention", async (InsightsService s, CancellationToken ct) =>
+            Results.Ok(await s.IntegrationAttentionAsync(ct)));
+        insights.MapGet("/stale-opportunities", async (int? days, InsightsService s, CancellationToken ct) =>
+            Results.Ok(await s.StaleOpportunitiesAsync(days ?? 30, ct)));
+        insights.MapGet("/pipeline", async (InsightsService s, CancellationToken ct) =>
+            Results.Ok(await s.PipelineAsync(ct)));
+        insights.MapGet("/receivables", async (InsightsService s, CancellationToken ct) =>
+            Results.Ok(await s.ReceivablesAsync(ct)));
     }
 }

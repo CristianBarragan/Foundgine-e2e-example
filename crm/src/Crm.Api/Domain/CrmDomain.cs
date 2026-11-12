@@ -1,4 +1,5 @@
 using Crm.Api.Application;
+using Crm.Api.Infrastructure;
 using Foundgine.Core.Semantic.Authorization;
 using Foundgine.Providers.EntityFrameworkCore;
 using Foundgine.Runtime;
@@ -17,10 +18,13 @@ public sealed class CrmDomain : IFoundgineCapability
         // Tenant and capability checks happen in the application services (see TenantScope / policies).
         context.Options.AuthorizationPolicy ??= new AllowAllSemanticAuthorizationPolicy();
 
-        context.Services.AddFoundgineEf(CrmSemantics.Metadata, (sp, o) =>
-            o.UseNpgsql(sp.GetRequiredService<IConfiguration>()[ConnectionStringName]
-                        ?? Environment.GetEnvironmentVariable(ConnectionStringName)
-                        ?? throw new InvalidOperationException($"{ConnectionStringName} is required.")));
+        context.Services.AddFoundgineEf(
+            CrmSemantics.Metadata,
+            (sp, o) => o.UseCrmNpgsql(
+                sp.GetRequiredService<IConfiguration>()[ConnectionStringName]
+                ?? Environment.GetEnvironmentVariable(ConnectionStringName)
+                ?? throw new InvalidOperationException($"{ConnectionStringName} is required.")),
+            CrmEf.ConfigureModel);
 
         context.Services.AddSingleton(new SemanticAuthorizer(new AllowAllSemanticAuthorizationPolicy()));
         context.Services.AddSingleton<Foundgine.Core.Semantic.Planning.Planner>();

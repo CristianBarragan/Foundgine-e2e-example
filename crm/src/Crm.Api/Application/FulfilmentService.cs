@@ -1,8 +1,10 @@
 using System.Text.Json;
+using Npgsql;
 using Crm.Api.Domain;
 using Crm.Api.Integration;
 using Foundgine.Providers.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using QuoteLine = Crm.Api.Domain.QuoteLine;
 
 namespace Crm.Api.Application;
 
@@ -13,101 +15,31 @@ public static class ShipmentStatuses
 
 public static class InvoiceStatuses
 {
-    public static readonly string[] All = ["Issued", "PartiallyPaid", "Paid", "Overdue", "Void"];
+    public const string Issued = "Issued", PartiallyPaid = "PartiallyPaid", Paid = "Paid", Overdue = "Overdue", Void = "Void";
+    public static readonly string[] All = [Issued, PartiallyPaid, Paid, Overdue, Void];
 }
 
 public static class PaymentStatuses
 {
-    public static readonly string[] All = ["Received", "Reconciled", "Reversed"];
+    public const string Received = "Received", Reconciled = "Reconciled", Reversed = "Reversed";
+    public static readonly string[] All = [Received, Reconciled, Reversed];
 }
 
-public static class ReturnStatuses
-{
-    public const string Requested = "Requested", Authorized = "Authorized", Rejected = "Rejected", Completed = "Completed";
+public sealed record ReturnRequestInput(IReadOnlyList<ReturnLineDto>? Lines, string? Reason);
 
-    /// <summary>Requested -> Authorized | Rejected; Authorized -> Completed. Anything else is not allowed.</summary>
-    public static bool CanMove(string from, string to) =>
-        (from, to) is (Requested, Authorized) or (Requested, Rejected) or (Authorized, Completed);
-}
+public sealed record FulfilmentView(int QuoteId, string ErpOrderId, IReadOnlyList<Shipment> Shipments,
+    IReadOnlyList<Invoice> Invoices, IReadOnlyList<Payment> Payments);
 
-public sealed record ReturnRequest(IReadOnlyList<ReturnLineDto>? Lines, string? Reason);
-
-public sealed class ShipmentRow
-{
-    public string ErpShipmentId { get; set; } = "";
-    public int QuoteId { get; set; }
-    public string ErpOrderId { get; set; } = "";
-    public string Status { get; set; } = "";
-    public string Carrier { get; set; } = "";
-    public string TrackingNumber { get; set; } = "";
-    public int Version { get; set; }
-    public DateTime UpdatedAt { get; set; }
-}
-
-public sealed class InvoiceRow
-{
-    public string ErpInvoiceId { get; set; } = "";
-    public int QuoteId { get; set; }
-    public int CustomerId { get; set; }
-    public string ErpOrderId { get; set; } = "";
-    public string Number { get; set; } = "";
-    public decimal Total { get; set; }
-    public string Status { get; set; } = "";
-    public DateTime IssuedAt { get; set; }
-    public DateTime? DueAt { get; set; }
-    public int Version { get; set; }
-    public DateTime UpdatedAt { get; set; }
-}
-
-public sealed class PaymentRow
-{
-    public string ErpPaymentId { get; set; } = "";
-    public string ErpInvoiceId { get; set; } = "";
-    public int QuoteId { get; set; }
-    public decimal Amount { get; set; }
-    public string Status { get; set; } = "";
-    public int Version { get; set; }
-    public DateTime UpdatedAt { get; set; }
-}
-
-public sealed class ReturnRow
-{
-    public int Id { get; set; }
-    public int QuoteId { get; set; }
-    public int CustomerId { get; set; }
-    public string Status { get; set; } = "";
-    public string Reason { get; set; } = "";
-    public string ErpReturnId { get; set; } = "";
-    public string DecisionNote { get; set; } = "";
-    public string RequestedBy { get; set; } = "";
-    public DateTime CreatedAt { get; set; }
-    public DateTime UpdatedAt { get; set; }
-}
-
-public sealed class ReturnLineRow
-{
-    public int ReturnId { get; set; }
-    public string Sku { get; set; } = "";
-    public int Quantity { get; set; }
-}
-
-public sealed class SkuQuantityRow
-{
-    public string Sku { get; set; } = "";
-    public long Quantity { get; set; }
-}
-
-public sealed record FulfilmentView(int QuoteId, string ErpOrderId, IReadOnlyList<ShipmentRow> Shipments,
-    IReadOnlyList<InvoiceRow> Invoices, IReadOnlyList<PaymentRow> Payments);
-
-public sealed record ReturnView(ReturnRow Return, IReadOnlyList<ReturnLineRow> Lines);
+public sealed record ReturnView(ReturnRequest Return, IReadOnlyList<ReturnRequestLine> Lines);
 
 /// <summary>
 /// Phase 8, CRM side. Shipment / invoice / payment facts are ERP-owned: the Record* methods (called by Temporal
 /// activities with an explicit tenant) upsert them by ERP id and only accept a strictly newer version, so duplicate
-/// or out-of-order deliveries are harmless. The ERP order id is resolved to a CRM quote; if the quote has not been
-/// marked Ordered yet the call throws not-found and the activity retries. Return requests are CRM-owned: they are
-/// written together with a ReturnRequested outbox message, and the ERP decision comes back via RecordReturnDecision.
+/// or out-of-order deliveries are harmless. The upsert is EF: a version-guarded ExecuteUpdate, then an insert when the
+/// row is new (a concurrent insert loses on the primary key and is ignored). The ERP order id is resolved to a CRM
+/// quote; if the quote has not been marked Ordered yet the call throws not-found and the activity retries. Return
+/// requests are CRM-owned: written together with a ReturnRequested outbox message; the ERP decision comes back via
+/// RecordReturnDecision.
 /// </summary>
 public sealed class FulfilmentService(IFoundgineRepository<Quote> quotes, IFoundgineRepository<Customer> customers,
     IntegrationService integration, ITenantContext tenant)
@@ -122,13 +54,21 @@ public sealed class FulfilmentService(IFoundgineRepository<Quote> quotes, IFound
         RequireStatus(i.Status, ShipmentStatuses.All, "shipment");
         RequireVersion(i.Version);
         var quoteId = await ResolveQuoteAsync(i.TenantId, i.ErpOrderId, ct);
-        await Db.Database.ExecuteSqlInterpolatedAsync($@"
-            INSERT INTO shipments (tenant_id, erp_shipment_id, quote_id, erp_order_id, status, carrier, tracking_number, version, updated_at)
-            VALUES ({i.TenantId}, {i.ErpShipmentId}, {quoteId}, {i.ErpOrderId}, {i.Status}, {i.Carrier ?? ""}, {i.TrackingNumber ?? ""}, {i.Version}, {DateTime.UtcNow})
-            ON CONFLICT (tenant_id, erp_shipment_id) DO UPDATE
-               SET status = EXCLUDED.status, carrier = EXCLUDED.carrier, tracking_number = EXCLUDED.tracking_number,
-                   version = EXCLUDED.version, updated_at = EXCLUDED.updated_at
-             WHERE shipments.version < EXCLUDED.version AND shipments.quote_id = EXCLUDED.quote_id", ct);
+        var now = DateTime.UtcNow;
+        string carrier = i.Carrier ?? "", tracking = i.TrackingNumber ?? "";
+        var (tenantId, erpId, status, version) = (i.TenantId, i.ErpShipmentId, i.Status, i.Version);
+        var set = Db.Set<Shipment>();
+        var updated = await set
+            .Where(s => s.TenantId == tenantId && s.ErpShipmentId == erpId && s.QuoteId == quoteId && s.Version < version)
+            .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, status).SetProperty(s => s.Carrier, carrier)
+                .SetProperty(s => s.TrackingNumber, tracking).SetProperty(s => s.Version, version)
+                .SetProperty(s => s.UpdatedAt, now), ct);
+        if (updated == 0 && !await set.AnyAsync(s => s.TenantId == tenantId && s.ErpShipmentId == erpId, ct))
+            await InsertIfAbsentAsync(new Shipment
+            {
+                TenantId = tenantId, ErpShipmentId = erpId, QuoteId = quoteId, ErpOrderId = i.ErpOrderId,
+                Status = status, Carrier = carrier, TrackingNumber = tracking, Version = version, UpdatedAt = now
+            }, ct);
     }
 
     public async Task RecordInvoiceAsync(RecordInvoiceInput i, CancellationToken ct)
@@ -140,13 +80,23 @@ public sealed class FulfilmentService(IFoundgineRepository<Quote> quotes, IFound
         if (i.Total < 0) throw new CrmValidationException("Invoice total cannot be negative.");
         var quoteId = await ResolveQuoteAsync(i.TenantId, i.ErpOrderId, ct);
         var q = await quotes.GetAsync(quoteId, ct) ?? throw new CrmNotFoundException($"Quote {quoteId} not found.");
-        await Db.Database.ExecuteSqlInterpolatedAsync($@"
-            INSERT INTO invoices (tenant_id, erp_invoice_id, quote_id, customer_id, erp_order_id, number, total, status, issued_at, due_at, version, updated_at)
-            VALUES ({i.TenantId}, {i.ErpInvoiceId}, {quoteId}, {q.CustomerId}, {i.ErpOrderId}, {i.Number}, {i.Total}, {i.Status}, {i.IssuedAt.ToUniversalTime()}, {i.DueAt?.ToUniversalTime()}, {i.Version}, {DateTime.UtcNow})
-            ON CONFLICT (tenant_id, erp_invoice_id) DO UPDATE
-               SET number = EXCLUDED.number, total = EXCLUDED.total, status = EXCLUDED.status, issued_at = EXCLUDED.issued_at,
-                   due_at = EXCLUDED.due_at, version = EXCLUDED.version, updated_at = EXCLUDED.updated_at
-             WHERE invoices.version < EXCLUDED.version AND invoices.quote_id = EXCLUDED.quote_id", ct);
+        var now = DateTime.UtcNow;
+        var issued = i.IssuedAt.ToUniversalTime();
+        DateTime? due = i.DueAt?.ToUniversalTime();
+        var (tenantId, erpId, number, total, status, version) = (i.TenantId, i.ErpInvoiceId, i.Number, i.Total, i.Status, i.Version);
+        var set = Db.Set<Invoice>();
+        var updated = await set
+            .Where(x => x.TenantId == tenantId && x.ErpInvoiceId == erpId && x.QuoteId == quoteId && x.Version < version)
+            .ExecuteUpdateAsync(u => u.SetProperty(x => x.Number, number).SetProperty(x => x.Total, total)
+                .SetProperty(x => x.Status, status).SetProperty(x => x.IssuedAt, issued).SetProperty(x => x.DueAt, due)
+                .SetProperty(x => x.Version, version).SetProperty(x => x.UpdatedAt, now), ct);
+        if (updated == 0 && !await set.AnyAsync(x => x.TenantId == tenantId && x.ErpInvoiceId == erpId, ct))
+            await InsertIfAbsentAsync(new Invoice
+            {
+                TenantId = tenantId, ErpInvoiceId = erpId, QuoteId = quoteId, CustomerId = q.CustomerId,
+                ErpOrderId = i.ErpOrderId, Number = number, Total = total, Status = status, IssuedAt = issued,
+                DueAt = due, Version = version, UpdatedAt = now
+            }, ct);
     }
 
     public async Task RecordPaymentAsync(RecordPaymentInput i, CancellationToken ct)
@@ -157,12 +107,19 @@ public sealed class FulfilmentService(IFoundgineRepository<Quote> quotes, IFound
         RequireVersion(i.Version);
         if (i.Amount < 0) throw new CrmValidationException("Payment amount cannot be negative.");
         var quoteId = await ResolveQuoteAsync(i.TenantId, i.ErpOrderId, ct);
-        await Db.Database.ExecuteSqlInterpolatedAsync($@"
-            INSERT INTO payments (tenant_id, erp_payment_id, erp_invoice_id, quote_id, amount, status, version, updated_at)
-            VALUES ({i.TenantId}, {i.ErpPaymentId}, {i.ErpInvoiceId}, {quoteId}, {i.Amount}, {i.Status}, {i.Version}, {DateTime.UtcNow})
-            ON CONFLICT (tenant_id, erp_payment_id) DO UPDATE
-               SET amount = EXCLUDED.amount, status = EXCLUDED.status, version = EXCLUDED.version, updated_at = EXCLUDED.updated_at
-             WHERE payments.version < EXCLUDED.version AND payments.quote_id = EXCLUDED.quote_id", ct);
+        var now = DateTime.UtcNow;
+        var (tenantId, erpId, amount, status, version) = (i.TenantId, i.ErpPaymentId, i.Amount, i.Status, i.Version);
+        var set = Db.Set<Payment>();
+        var updated = await set
+            .Where(x => x.TenantId == tenantId && x.ErpPaymentId == erpId && x.QuoteId == quoteId && x.Version < version)
+            .ExecuteUpdateAsync(u => u.SetProperty(x => x.Amount, amount).SetProperty(x => x.Status, status)
+                .SetProperty(x => x.Version, version).SetProperty(x => x.UpdatedAt, now), ct);
+        if (updated == 0 && !await set.AnyAsync(x => x.TenantId == tenantId && x.ErpPaymentId == erpId, ct))
+            await InsertIfAbsentAsync(new Payment
+            {
+                TenantId = tenantId, ErpPaymentId = erpId, ErpInvoiceId = i.ErpInvoiceId, QuoteId = quoteId,
+                Amount = amount, Status = status, Version = version, UpdatedAt = now
+            }, ct);
     }
 
     // ---- Reads (current tenant) -----------------------------------------------------------------------------------
@@ -171,62 +128,53 @@ public sealed class FulfilmentService(IFoundgineRepository<Quote> quotes, IFound
     {
         var q = await GetQuoteAsync(quoteId, ct);
         var t = q.TenantId;
-        var shipments = await Db.Database.SqlQuery<ShipmentRow>($@"
-            SELECT erp_shipment_id AS ""ErpShipmentId"", quote_id AS ""QuoteId"", erp_order_id AS ""ErpOrderId"", status AS ""Status"",
-                   carrier AS ""Carrier"", tracking_number AS ""TrackingNumber"", version AS ""Version"", updated_at AS ""UpdatedAt""
-            FROM shipments WHERE tenant_id = {t} AND quote_id = {quoteId} ORDER BY erp_shipment_id").ToListAsync(ct);
-        var invoices = await QueryInvoicesAsync(t, quoteId, null, ct);
-        var payments = await Db.Database.SqlQuery<PaymentRow>($@"
-            SELECT erp_payment_id AS ""ErpPaymentId"", erp_invoice_id AS ""ErpInvoiceId"", quote_id AS ""QuoteId"", amount AS ""Amount"",
-                   status AS ""Status"", version AS ""Version"", updated_at AS ""UpdatedAt""
-            FROM payments WHERE tenant_id = {t} AND quote_id = {quoteId} ORDER BY erp_payment_id").ToListAsync(ct);
+        var shipments = await Db.Set<Shipment>().AsNoTracking()
+            .Where(s => s.TenantId == t && s.QuoteId == quoteId).OrderBy(s => s.ErpShipmentId).ToListAsync(ct);
+        var invoices = await Db.Set<Invoice>().AsNoTracking()
+            .Where(x => x.TenantId == t && x.QuoteId == quoteId)
+            .OrderByDescending(x => x.IssuedAt).ThenBy(x => x.ErpInvoiceId).ToListAsync(ct);
+        var payments = await Db.Set<Payment>().AsNoTracking()
+            .Where(p => p.TenantId == t && p.QuoteId == quoteId).OrderBy(p => p.ErpPaymentId).ToListAsync(ct);
         return new FulfilmentView(q.Id, q.ErpOrderId, shipments, invoices, payments);
     }
 
-    public async Task<IReadOnlyList<InvoiceRow>> ListInvoicesForCustomerAsync(int customerId, CancellationToken ct)
+    public async Task<IReadOnlyList<Invoice>> ListInvoicesForCustomerAsync(int customerId, CancellationToken ct)
     {
         var c = await customers.GetAsync(customerId, ct);
         if (c is null || c.TenantId != tenant.TenantId) throw new CrmNotFoundException($"Customer {customerId} not found.");
-        return await QueryInvoicesAsync(c.TenantId, null, c.Id, ct);
-    }
-
-    // 0 means "any": identity ids are always > 0, and it avoids untyped NULL parameters in the SQL.
-    private Task<List<InvoiceRow>> QueryInvoicesAsync(string t, int? quote, int? customer, CancellationToken ct)
-    {
-        int quoteId = quote ?? 0, customerId = customer ?? 0;
-        return Db.Database.SqlQuery<InvoiceRow>($@"
-            SELECT erp_invoice_id AS ""ErpInvoiceId"", quote_id AS ""QuoteId"", customer_id AS ""CustomerId"", erp_order_id AS ""ErpOrderId"",
-                   number AS ""Number"", total AS ""Total"", status AS ""Status"", issued_at AS ""IssuedAt"", due_at AS ""DueAt"",
-                   version AS ""Version"", updated_at AS ""UpdatedAt""
-            FROM invoices
-            WHERE tenant_id = {t} AND ({quoteId} = 0 OR quote_id = {quoteId}) AND ({customerId} = 0 OR customer_id = {customerId})
-            ORDER BY issued_at DESC, erp_invoice_id").ToListAsync(ct);
+        var t = c.TenantId;
+        return await Db.Set<Invoice>().AsNoTracking().Where(x => x.TenantId == t && x.CustomerId == customerId)
+            .OrderByDescending(x => x.IssuedAt).ThenBy(x => x.ErpInvoiceId).ToListAsync(ct);
     }
 
     // ---- Returns --------------------------------------------------------------------------------------------------
 
-    public async Task<ReturnView> RequestReturnAsync(int quoteId, ReturnRequest r, CancellationToken ct)
+    public async Task<ReturnView> RequestReturnAsync(int quoteId, ReturnRequestInput r, CancellationToken ct)
     {
         var q = await GetQuoteAsync(quoteId, ct);
         if (q.Status != QuoteStatuses.Ordered) throw new CrmConflictException("Only an ordered quote can have returns.");
         if (string.IsNullOrWhiteSpace(r.Reason) || r.Reason.Length > 500) throw new CrmValidationException("A reason (up to 500 characters) is required.");
         var wanted = MergeLines(r.Lines);
         var mapping = await integration.GetMappingAsync(q.TenantId, q.CustomerId, ct);
-        if (mapping is not { Status: "Active" } || string.IsNullOrEmpty(mapping.ErpCustomerId))
+        if (mapping is not { Status: MappingStatuses.Active } || string.IsNullOrEmpty(mapping.ErpCustomerId))
             throw new CrmConflictException("The customer is not yet synchronised to the ERP.");
 
+        var t = q.TenantId;
         await using var tx = await Db.Database.BeginTransactionAsync(ct);
         // Serialise concurrent return requests for the same quote so the quantity cap below cannot be raced.
-        await Db.Database.SqlQuery<int>($@"SELECT 1 AS ""Value"" FROM quotes WHERE quote_id = {quoteId} AND tenant_id = {q.TenantId} FOR UPDATE")
-            .ToListAsync(ct);
-        var quoted = (await Db.Database.SqlQuery<SkuQuantityRow>($@"
-            SELECT sku AS ""Sku"", SUM(quantity)::bigint AS ""Quantity"" FROM quote_lines
-            WHERE quote_id = {quoteId} AND tenant_id = {q.TenantId} GROUP BY sku").ToListAsync(ct)).ToDictionary(x => x.Sku, x => x.Quantity);
-        var already = (await Db.Database.SqlQuery<SkuQuantityRow>($@"
-            SELECT l.sku AS ""Sku"", SUM(l.quantity)::bigint AS ""Quantity"" FROM return_request_lines l
-            JOIN return_requests r ON r.return_id = l.return_id
-            WHERE r.quote_id = {quoteId} AND r.tenant_id = {q.TenantId} AND r.status <> 'Rejected' GROUP BY l.sku").ToListAsync(ct))
-            .ToDictionary(x => x.Sku, x => x.Quantity);
+        // EF has no row-lock hint, so this is the one raw statement; it still materialises the EF entity.
+        await Db.Set<Quote>()
+            .FromSql($"SELECT * FROM quotes WHERE quote_id = {quoteId} AND tenant_id = {t} FOR UPDATE")
+            .AsNoTracking().ToListAsync(ct);
+        var quoted = await Db.Set<QuoteLine>().AsNoTracking().Where(l => l.QuoteId == quoteId && l.TenantId == t)
+            .GroupBy(l => l.Sku).Select(g => new { Sku = g.Key, Qty = g.Sum(l => (long)l.Quantity) })
+            .ToDictionaryAsync(x => x.Sku, x => x.Qty, ct);
+        var already = await (from l in Db.Set<ReturnRequestLine>().AsNoTracking()
+                join rr in Db.Set<ReturnRequest>() on l.ReturnId equals rr.Id
+                where rr.QuoteId == quoteId && rr.TenantId == t && rr.Status != ReturnStatuses.Rejected
+                group l by l.Sku into g
+                select new { Sku = g.Key, Qty = g.Sum(x => (long)x.Quantity) })
+            .ToDictionaryAsync(x => x.Sku, x => x.Qty, ct);
         foreach (var (sku, qty) in wanted)
         {
             if (!quoted.TryGetValue(sku, out var ordered)) throw new CrmValidationException($"SKU {sku} is not on this quote.");
@@ -235,39 +183,44 @@ public sealed class FulfilmentService(IFoundgineRepository<Quote> quotes, IFound
         }
 
         var now = DateTime.UtcNow;
-        var returnId = await Db.Database.SqlQuery<int>($@"
-            INSERT INTO return_requests (tenant_id, quote_id, customer_id, status, reason, requested_by, created_at, updated_at)
-            VALUES ({q.TenantId}, {quoteId}, {q.CustomerId}, 'Requested', {r.Reason.Trim()}, {tenant.UserId}, {now}, {now})
-            RETURNING return_id AS ""Value""").SingleAsync(ct);
-        foreach (var (sku, qty) in wanted)
-            await Db.Database.ExecuteSqlInterpolatedAsync($@"
-                INSERT INTO return_request_lines (tenant_id, return_id, sku, quantity) VALUES ({q.TenantId}, {returnId}, {sku}, {qty})", ct);
+        var request = new ReturnRequest
+        {
+            TenantId = t, QuoteId = quoteId, CustomerId = q.CustomerId, Status = ReturnStatuses.Requested,
+            Reason = r.Reason.Trim(), RequestedBy = tenant.UserId, CreatedAt = now, UpdatedAt = now
+        };
+        Db.Set<ReturnRequest>().Add(request);
+        await Db.SaveChangesAsync(ct);
+        Db.Set<ReturnRequestLine>().AddRange(wanted.Select(w => new ReturnRequestLine
+            { TenantId = t, ReturnId = request.Id, Sku = w.Key, Quantity = w.Value }));
+        await Db.SaveChangesAsync(ct);
 
         var messageId = Guid.NewGuid();
-        var dto = new ReturnRequestedDto(1, q.TenantId, returnId, quoteId, q.CustomerId, mapping.ErpCustomerId!, q.ErpOrderId,
+        var dto = new ReturnRequestedDto(1, t, request.Id, quoteId, q.CustomerId, mapping.ErpCustomerId!, q.ErpOrderId,
             messageId.ToString(), r.Reason.Trim(), wanted.Select(w => new ReturnLineDto(w.Key, w.Value)).ToArray());
-        var payload = JsonSerializer.Serialize(dto);
-        await Db.Database.ExecuteSqlInterpolatedAsync($@"
-            INSERT INTO outbox_messages (id, tenant_id, type, aggregate_id, attempt, payload, created_at)
-            VALUES ({messageId}, {q.TenantId}, {FulfilmentIntegrationNames.ReturnRequested}, {returnId}, 1, {payload}::jsonb, {now})", ct);
+        await Outbox.EnqueueAsync(Db, messageId, t, FulfilmentIntegrationNames.ReturnRequested, request.Id, 1,
+            JsonSerializer.Serialize(dto), ct, tenant.UserId);
         await tx.CommitAsync(ct);
+        var returnId = request.Id;
+        Db.ChangeTracker.Clear();
         return await GetReturnAsync(returnId, ct);
     }
 
     public async Task<ReturnView> GetReturnAsync(int returnId, CancellationToken ct)
     {
         var t = tenant.TenantId;
-        var row = (await QueryReturnsAsync(t, null, returnId, ct)).FirstOrDefault()
+        var row = await Db.Set<ReturnRequest>().AsNoTracking().FirstOrDefaultAsync(x => x.Id == returnId && x.TenantId == t, ct)
                   ?? throw new CrmNotFoundException($"Return {returnId} not found.");
-        return new ReturnView(row, await QueryReturnLinesAsync(t, [returnId], ct));
+        return new ReturnView(row, await LinesAsync(t, [returnId], ct));
     }
 
     public async Task<IReadOnlyList<ReturnView>> ListReturnsForQuoteAsync(int quoteId, CancellationToken ct)
     {
         var q = await GetQuoteAsync(quoteId, ct);
-        var rows = await QueryReturnsAsync(q.TenantId, quoteId, null, ct);
-        var lines = await QueryReturnLinesAsync(q.TenantId, rows.Select(r => r.Id).ToArray(), ct);
-        return rows.Select(r => new ReturnView(r, lines.Where(l => l.ReturnId == r.Id).ToList())).ToList();
+        var t = q.TenantId;
+        var rows = await Db.Set<ReturnRequest>().AsNoTracking().Where(x => x.TenantId == t && x.QuoteId == quoteId)
+            .OrderBy(x => x.Id).ToListAsync(ct);
+        var lines = await LinesAsync(t, rows.Select(x => x.Id).ToArray(), ct);
+        return rows.Select(x => new ReturnView(x, lines.Where(l => l.ReturnId == x.Id).ToList())).ToList();
     }
 
     /// <summary>
@@ -280,35 +233,59 @@ public sealed class FulfilmentService(IFoundgineRepository<Quote> quotes, IFound
             throw new CrmValidationException("Decision must be Authorized, Rejected or Completed.");
         if (i.Decision == ReturnStatuses.Authorized && string.IsNullOrWhiteSpace(i.ErpReturnId))
             throw new CrmValidationException("erpReturnId is required when authorizing.");
-        var current = (await QueryReturnsAsync(i.TenantId, null, i.ReturnId, ct)).FirstOrDefault()
+        var (tenantId, returnId, decision) = (i.TenantId, i.ReturnId, i.Decision);
+        var current = await Db.Set<ReturnRequest>().AsNoTracking()
+                          .FirstOrDefaultAsync(x => x.Id == returnId && x.TenantId == tenantId, ct)
                       ?? throw new CrmNotFoundException($"Return {i.ReturnId} not found.");
-        if (current.Status == i.Decision)
+        if (current.Status == decision)
         {
-            if (i.Decision == ReturnStatuses.Authorized && current.ErpReturnId != i.ErpReturnId)
+            if (decision == ReturnStatuses.Authorized && current.ErpReturnId != i.ErpReturnId)
                 throw new CrmConflictException("The return is already linked to a different ERP return.");
             return;
         }
 
-        if (!ReturnStatuses.CanMove(current.Status, i.Decision))
-            throw new CrmConflictException($"A {current.Status} return cannot become {i.Decision}.");
+        if (!ReturnStatuses.CanMove(current.Status, decision))
+            throw new CrmConflictException($"A {current.Status} return cannot become {decision}.");
         var erpId = i.ErpReturnId ?? "";
         var note = (i.Note ?? "").Length > 500 ? i.Note![..500] : i.Note ?? "";
-        var changed = await Db.Database.ExecuteSqlInterpolatedAsync($@"
-            UPDATE return_requests
-            SET status = {i.Decision}, updated_at = {DateTime.UtcNow}, decision_note = {note},
-                erp_return_id = CASE WHEN {erpId} <> '' THEN {erpId} ELSE erp_return_id END
-            WHERE return_id = {i.ReturnId} AND tenant_id = {i.TenantId} AND status = {current.Status}", ct);
+        var now = DateTime.UtcNow;
+        var from = current.Status;
+        var guarded = Db.Set<ReturnRequest>().Where(x => x.Id == returnId && x.TenantId == tenantId && x.Status == from);
+        // The ERP return id is only written when one is supplied; a status-only decision keeps the stored id.
+        var changed = erpId == ""
+            ? await guarded.ExecuteUpdateAsync(u => u.SetProperty(x => x.Status, decision)
+                .SetProperty(x => x.UpdatedAt, now).SetProperty(x => x.DecisionNote, note), ct)
+            : await guarded.ExecuteUpdateAsync(u => u.SetProperty(x => x.Status, decision)
+                .SetProperty(x => x.UpdatedAt, now).SetProperty(x => x.DecisionNote, note)
+                .SetProperty(x => x.ErpReturnId, erpId), ct);
         if (changed != 1) throw new CrmConflictException("The return changed concurrently; retry.");
     }
 
     // ---- helpers --------------------------------------------------------------------------------------------------
 
+    private async Task InsertIfAbsentAsync<T>(T row, CancellationToken ct) where T : class
+    {
+        Db.Set<T>().Add(row);
+        try
+        {
+            await Db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: "23505" })
+        {
+            // a concurrent delivery inserted it first; it carries the same or a newer version
+        }
+        finally
+        {
+            Db.Entry(row).State = EntityState.Detached;
+        }
+    }
+
     private async Task<int> ResolveQuoteAsync(string tenantId, string erpOrderId, CancellationToken ct)
     {
         Require(tenantId, "tenantId");
         Require(erpOrderId, "erpOrderId");
-        var ids = await Db.Database.SqlQuery<int>($@"
-            SELECT quote_id AS ""Value"" FROM quotes WHERE tenant_id = {tenantId} AND erp_order_id = {erpOrderId}").ToListAsync(ct);
+        var ids = await Db.Set<Quote>().AsNoTracking()
+            .Where(q => q.TenantId == tenantId && q.ErpOrderId == erpOrderId).Select(q => q.Id).ToListAsync(ct);
         return ids.Count == 1 ? ids[0] : throw new CrmNotFoundException($"No CRM quote for ERP order {erpOrderId}.");
     }
 
@@ -318,24 +295,11 @@ public sealed class FulfilmentService(IFoundgineRepository<Quote> quotes, IFound
         return q is not null && q.TenantId == tenant.TenantId ? q : throw new CrmNotFoundException($"Quote {id} not found.");
     }
 
-    private Task<List<ReturnRow>> QueryReturnsAsync(string t, int? quote, int? ret, CancellationToken ct)
-    {
-        int quoteId = quote ?? 0, returnId = ret ?? 0;
-        return Db.Database.SqlQuery<ReturnRow>($@"
-            SELECT return_id AS ""Id"", quote_id AS ""QuoteId"", customer_id AS ""CustomerId"", status AS ""Status"", reason AS ""Reason"",
-                   erp_return_id AS ""ErpReturnId"", decision_note AS ""DecisionNote"", requested_by AS ""RequestedBy"",
-                   created_at AS ""CreatedAt"", updated_at AS ""UpdatedAt""
-            FROM return_requests
-            WHERE tenant_id = {t} AND ({quoteId} = 0 OR quote_id = {quoteId}) AND ({returnId} = 0 OR return_id = {returnId})
-            ORDER BY return_id").ToListAsync(ct);
-    }
-
-    private async Task<IReadOnlyList<ReturnLineRow>> QueryReturnLinesAsync(string t, int[] returnIds, CancellationToken ct) =>
+    private async Task<IReadOnlyList<ReturnRequestLine>> LinesAsync(string t, int[] returnIds, CancellationToken ct) =>
         returnIds.Length == 0
             ? []
-            : await Db.Database.SqlQuery<ReturnLineRow>($@"
-                SELECT return_id AS ""ReturnId"", sku AS ""Sku"", quantity AS ""Quantity""
-                FROM return_request_lines WHERE tenant_id = {t} AND return_id = ANY({returnIds}) ORDER BY return_line_id").ToListAsync(ct);
+            : await Db.Set<ReturnRequestLine>().AsNoTracking()
+                .Where(l => l.TenantId == t && returnIds.Contains(l.ReturnId)).OrderBy(l => l.Id).ToListAsync(ct);
 
     private static SortedDictionary<string, int> MergeLines(IReadOnlyList<ReturnLineDto>? lines)
     {

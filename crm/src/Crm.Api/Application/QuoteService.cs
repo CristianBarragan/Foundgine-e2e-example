@@ -7,6 +7,7 @@ using Foundgine.Providers.Aot;
 using Foundgine.Providers.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using QuoteLine = Crm.Api.Domain.QuoteLine;
 
 namespace Crm.Api.Application;
 
@@ -53,12 +54,13 @@ public sealed class QuoteService(
         if (q.Status != QuoteStatuses.Draft) throw new CrmConflictException("Only a draft quote can be edited.");
         var items = Validate(r.Lines);
         await using var tx = await Db.Database.BeginTransactionAsync(ct);
-        var changed = await Db.Database.ExecuteSqlInterpolatedAsync($@"
-            UPDATE quotes SET total = {Total(items)}, updated_at = {DateTime.UtcNow}, updated_by = {tenant.UserId}
-            WHERE quote_id = {id} AND tenant_id = {q.TenantId} AND status = 'Draft'", ct);
+        var (t, user, now, total) = (q.TenantId, tenant.UserId, DateTime.UtcNow, Total(items));
+        var changed = await Db.Set<Quote>()
+            .Where(x => x.Id == id && x.TenantId == t && x.Status == QuoteStatuses.Draft)
+            .ExecuteUpdateAsync(u => u.SetProperty(x => x.Total, total).SetProperty(x => x.UpdatedAt, now)
+                .SetProperty(x => x.UpdatedBy, user), ct);
         if (changed != 1) throw new CrmConflictException("The quote is no longer a draft.");
-        await Db.Database.ExecuteSqlInterpolatedAsync(
-            $"DELETE FROM quote_lines WHERE quote_id = {id} AND tenant_id = {q.TenantId}", ct);
+        await Db.Set<QuoteLine>().Where(l => l.QuoteId == id && l.TenantId == t).ExecuteDeleteAsync(ct);
         await AddLinesAsync(q, items, ct);
         await tx.CommitAsync(ct);
         return await GetAsync(id, ct);
@@ -71,10 +73,12 @@ public sealed class QuoteService(
         var needsApproval = q.Total > options.Value.ApprovalThreshold;
         var next = needsApproval ? QuoteStatuses.PendingApproval : QuoteStatuses.Approved;
         var decidedBy = needsApproval ? "" : "auto";
-        var changed = await Db.Database.ExecuteSqlInterpolatedAsync($@"
-            UPDATE quotes SET status = {next}, submitted_by = {tenant.UserId}, decided_by = {decidedBy},
-                updated_at = {DateTime.UtcNow}, updated_by = {tenant.UserId}
-            WHERE quote_id = {id} AND tenant_id = {q.TenantId} AND status = 'Draft'", ct);
+        var (t, user, now) = (q.TenantId, tenant.UserId, DateTime.UtcNow);
+        var changed = await Db.Set<Quote>()
+            .Where(x => x.Id == id && x.TenantId == t && x.Status == QuoteStatuses.Draft)
+            .ExecuteUpdateAsync(u => u.SetProperty(x => x.Status, next).SetProperty(x => x.SubmittedBy, user)
+                .SetProperty(x => x.DecidedBy, decidedBy).SetProperty(x => x.UpdatedAt, now)
+                .SetProperty(x => x.UpdatedBy, user), ct);
         if (changed != 1) throw new CrmConflictException("Only a draft quote can be submitted.");
         return await GetAsync(id, ct);
     }
@@ -87,11 +91,12 @@ public sealed class QuoteService(
         var q = await GetQuoteAsync(id, ct);
         if (q.Status == QuoteStatuses.PendingApproval && q.SubmittedBy == tenant.UserId)
             throw new CrmForbiddenException("The submitter cannot decide their own quote.");
-        var changed = await Db.Database.ExecuteSqlInterpolatedAsync($@"
-            UPDATE quotes SET status = {outcome}, decided_by = {tenant.UserId},
-                updated_at = {DateTime.UtcNow}, updated_by = {tenant.UserId}
-            WHERE quote_id = {id} AND tenant_id = {q.TenantId} AND status = 'PendingApproval'
-              AND submitted_by <> {tenant.UserId}", ct);
+        var (t, user, now) = (q.TenantId, tenant.UserId, DateTime.UtcNow);
+        var changed = await Db.Set<Quote>()
+            .Where(x => x.Id == id && x.TenantId == t && x.Status == QuoteStatuses.PendingApproval &&
+                        x.SubmittedBy != user)
+            .ExecuteUpdateAsync(u => u.SetProperty(x => x.Status, outcome).SetProperty(x => x.DecidedBy, user)
+                .SetProperty(x => x.UpdatedAt, now).SetProperty(x => x.UpdatedBy, user), ct);
         if (changed != 1) throw new CrmConflictException("The quote is not awaiting approval.");
         return await GetAsync(id, ct);
     }
@@ -102,26 +107,30 @@ public sealed class QuoteService(
         var view = await GetAsync(id, ct);
         var q = view.Quote;
         var mapping = await integration.GetMappingAsync(q.TenantId, q.CustomerId, ct);
-        if (mapping is not { Status: "Active" } || string.IsNullOrEmpty(mapping.ErpCustomerId))
+        if (mapping is not { Status: MappingStatuses.Active } || string.IsNullOrEmpty(mapping.ErpCustomerId))
             throw new CrmConflictException("The customer is not yet synchronised to the ERP.");
 
         await using var tx = await Db.Database.BeginTransactionAsync(ct);
-        var changed = await Db.Database.ExecuteSqlInterpolatedAsync($@"
-            UPDATE quotes SET status = 'Accepted', updated_at = {DateTime.UtcNow}, updated_by = {tenant.UserId}
-            WHERE quote_id = {id} AND tenant_id = {q.TenantId} AND status = 'Approved'", ct);
+        var (t, user, now) = (q.TenantId, tenant.UserId, DateTime.UtcNow);
+        var changed = await Db.Set<Quote>()
+            .Where(x => x.Id == id && x.TenantId == t && x.Status == QuoteStatuses.Approved)
+            .ExecuteUpdateAsync(u => u.SetProperty(x => x.Status, QuoteStatuses.Accepted)
+                .SetProperty(x => x.UpdatedAt, now).SetProperty(x => x.UpdatedBy, user), ct);
         if (changed != 1) throw new CrmConflictException("Only an approved quote can be accepted.");
-        await Db.Database.ExecuteSqlInterpolatedAsync($@"
-            UPDATE opportunities SET stage = 'ClosedWon', amount = {q.Total}, updated_at = {DateTime.UtcNow}, updated_by = {tenant.UserId}
-            WHERE opportunity_id = {q.OpportunityId} AND tenant_id = {q.TenantId} AND stage NOT IN ('ClosedWon','ClosedLost')", ct);
+        var (oppId, total) = (q.OpportunityId, q.Total);
+        await Db.Set<Opportunity>()
+            .Where(o => o.Id == oppId && o.TenantId == t && o.Stage != OpportunityStages.ClosedWon &&
+                        o.Stage != OpportunityStages.ClosedLost)
+            .ExecuteUpdateAsync(u => u.SetProperty(o => o.Stage, OpportunityStages.ClosedWon)
+                .SetProperty(o => o.Amount, total).SetProperty(o => o.UpdatedAt, now)
+                .SetProperty(o => o.UpdatedBy, user), ct);
 
         var messageId = Guid.NewGuid();
         var dto = new QuoteAcceptedDto(1, q.TenantId, q.Id, q.OpportunityId, q.CustomerId, mapping.ErpCustomerId!,
             messageId.ToString(), q.Total,
             view.Lines.Select(l => new QuoteLineDto(l.Sku, l.Description, l.Quantity, l.UnitPrice)).ToArray());
-        var payload = JsonSerializer.Serialize(dto);
-        await Db.Database.ExecuteSqlInterpolatedAsync($@"
-            INSERT INTO outbox_messages (id, tenant_id, type, aggregate_id, attempt, payload, created_at)
-            VALUES ({messageId}, {q.TenantId}, {QuoteIntegrationNames.QuoteAccepted}, {q.Id}, 1, {payload}::jsonb, {DateTime.UtcNow})", ct);
+        await Outbox.EnqueueAsync(Db, messageId, t, QuoteIntegrationNames.QuoteAccepted, q.Id, 1,
+            JsonSerializer.Serialize(dto), ct, user);
         await tx.CommitAsync(ct);
         return await GetAsync(id, ct);
     }
@@ -138,9 +147,11 @@ public sealed class QuoteService(
             throw new CrmConflictException("The quote already has a different ERP order.");
         }
 
-        var changed = await Db.Database.ExecuteSqlInterpolatedAsync($@"
-            UPDATE quotes SET status = 'Ordered', erp_order_id = {i.ErpOrderId}, updated_at = {DateTime.UtcNow}
-            WHERE quote_id = {i.QuoteId} AND tenant_id = {i.TenantId} AND status = 'Accepted'", ct);
+        var (erpOrderId, now) = (i.ErpOrderId, DateTime.UtcNow);
+        var changed = await Db.Set<Quote>()
+            .Where(x => x.Id == i.QuoteId && x.TenantId == i.TenantId && x.Status == QuoteStatuses.Accepted)
+            .ExecuteUpdateAsync(u => u.SetProperty(x => x.Status, QuoteStatuses.Ordered)
+                .SetProperty(x => x.ErpOrderId, erpOrderId).SetProperty(x => x.UpdatedAt, now), ct);
         if (changed != 1) throw new CrmConflictException("The quote is not in the Accepted state.");
     }
 
@@ -157,9 +168,11 @@ public sealed class QuoteService(
 
         var reason = (i.Reason ?? "").Trim();
         if (reason.Length > 500) reason = reason[..500];
-        var changed = await Db.Database.ExecuteSqlInterpolatedAsync($@"
-            UPDATE quotes SET status = 'OrderFailed', order_failure_reason = {reason}, updated_at = {DateTime.UtcNow}
-            WHERE quote_id = {i.QuoteId} AND tenant_id = {i.TenantId} AND status = 'Accepted'", ct);
+        var now = DateTime.UtcNow;
+        var changed = await Db.Set<Quote>()
+            .Where(x => x.Id == i.QuoteId && x.TenantId == i.TenantId && x.Status == QuoteStatuses.Accepted)
+            .ExecuteUpdateAsync(u => u.SetProperty(x => x.Status, QuoteStatuses.OrderFailed)
+                .SetProperty(x => x.OrderFailureReason, reason).SetProperty(x => x.UpdatedAt, now), ct);
         if (changed != 1) throw new CrmConflictException("The quote is not in the Accepted state.");
     }
 

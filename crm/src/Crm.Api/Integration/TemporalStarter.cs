@@ -9,7 +9,10 @@ public sealed class TemporalOptions
     public string Address { get; set; } = "localhost:7233";
     public string Namespace { get; set; } = "enterprise";
     public string OrchestrationTaskQueue { get; set; } = "orchestration";
+    public string CustomerToCashTaskQueue { get; set; } = "crm-orchestration";
     public string CrmTaskQueue { get; set; } = "crm";
+    /// <summary>Queue of the Foundgine process workflow (Keycloak admin operations); served by Crm.Worker.</summary>
+    public string FoundgineTaskQueue { get; set; } = "foundgine";
 }
 
 public sealed class TemporalWorkflowStarter(Microsoft.Extensions.Options.IOptions<TemporalOptions> options)
@@ -35,7 +38,13 @@ public sealed class TemporalWorkflowStarter(Microsoft.Extensions.Options.IOption
         finally { _gate.Release(); }
     }
 
-    public async Task StartCustomerOnboardingAsync(CustomerSyncDto dto, CancellationToken ct)
+    // Memo is visible in Temporal; it carries ids only (never tokens): who asked, for which tenant, under which correlation id.
+    private static Dictionary<string, object> Memo(string tenantId, string correlationId, string? initiator) => new()
+    {
+        ["correlationId"] = correlationId, ["tenantId"] = tenantId, ["initiator"] = initiator ?? "system:outbox"
+    };
+
+    public async Task StartCustomerOnboardingAsync(CustomerSyncDto dto, CancellationToken ct, string? initiator = null)
     {
         var client = await ClientAsync();
         var id = IntegrationNames.WorkflowId(dto.TenantId, dto.CrmCustomerId, dto.Attempt);
@@ -45,7 +54,7 @@ public sealed class TemporalWorkflowStarter(Microsoft.Extensions.Options.IOption
                 new WorkflowOptions(id, options.Value.OrchestrationTaskQueue)
                 {
                     IdReusePolicy = Temporalio.Api.Enums.V1.WorkflowIdReusePolicy.RejectDuplicate,
-                    Memo = new Dictionary<string, object> { ["correlationId"] = dto.CorrelationId }
+                    Memo = Memo(dto.TenantId, dto.CorrelationId, initiator)
                 });
         }
         catch (WorkflowAlreadyStartedException)
@@ -54,24 +63,33 @@ public sealed class TemporalWorkflowStarter(Microsoft.Extensions.Options.IOption
         }
     }
 
-    public async Task StartQuoteToOrderAsync(QuoteAcceptedDto dto, CancellationToken ct)
+    /// <summary>Starts the C# customer-to-cash parent; it starts the Java QuoteToOrderWorkflow as a child.</summary>
+    public async Task StartQuoteToOrderAsync(QuoteAcceptedDto dto, CancellationToken ct, string? initiator = null)
     {
         var client = await ClientAsync();
+        var quote = new QuoteAccepted(
+            dto.SchemaVersion, dto.TenantId, dto.QuoteId, dto.OpportunityId, dto.CrmCustomerId,
+            dto.ErpCustomerId, dto.CorrelationId, dto.Total,
+            dto.Lines.Select(line => new QuoteLine(line.Sku, line.Description, line.Quantity, line.UnitPrice)).ToArray());
+        var start = new CustomerToCashStart(
+            1, dto.TenantId, dto.QuoteId, dto.OpportunityId, dto.CrmCustomerId,
+            dto.CorrelationId, false, quote);
         try
         {
-            await client.StartWorkflowAsync(QuoteIntegrationNames.QuoteToOrderWorkflow, [dto],
-                new WorkflowOptions(QuoteIntegrationNames.WorkflowId(dto.TenantId, dto.QuoteId), options.Value.OrchestrationTaskQueue)
+            await client.StartWorkflowAsync(CustomerToCashNames.Workflow, [start],
+                new WorkflowOptions(CustomerToCashNames.WorkflowId(dto.TenantId, dto.QuoteId), options.Value.CustomerToCashTaskQueue)
                 {
                     IdReusePolicy = Temporalio.Api.Enums.V1.WorkflowIdReusePolicy.RejectDuplicate,
-                    Memo = new Dictionary<string, object> { ["correlationId"] = dto.CorrelationId }
+                    Memo = Memo(dto.TenantId, dto.CorrelationId, initiator)
                 });
         }
         catch (WorkflowAlreadyStartedException)
         {
+            // Duplicate outbox delivery: the customer-to-cash parent already owns this quote.
         }
     }
 
-    public async Task StartReturnProcessingAsync(ReturnRequestedDto dto, CancellationToken ct)
+    public async Task StartReturnProcessingAsync(ReturnRequestedDto dto, CancellationToken ct, string? initiator = null)
     {
         var client = await ClientAsync();
         try
@@ -80,7 +98,7 @@ public sealed class TemporalWorkflowStarter(Microsoft.Extensions.Options.IOption
                 new WorkflowOptions(FulfilmentIntegrationNames.ReturnWorkflowId(dto.TenantId, dto.ReturnId), options.Value.OrchestrationTaskQueue)
                 {
                     IdReusePolicy = Temporalio.Api.Enums.V1.WorkflowIdReusePolicy.RejectDuplicate,
-                    Memo = new Dictionary<string, object> { ["correlationId"] = dto.CorrelationId }
+                    Memo = Memo(dto.TenantId, dto.CorrelationId, initiator)
                 });
         }
         catch (WorkflowAlreadyStartedException)

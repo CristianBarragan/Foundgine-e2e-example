@@ -24,6 +24,7 @@ public sealed class JwtFactory : WebApplicationFactory<Program>
     protected override void ConfigureWebHost(Microsoft.AspNetCore.Hosting.IWebHostBuilder builder)
     {
         builder.UseSetting("Auth:DevHeaders", "false");
+        builder.UseSetting("Foundgine:Keycloak:EphemeralWarrantKey", "true");
         builder.ConfigureServices(s => s.PostConfigure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, o =>
         {
             o.Authority = null;
@@ -41,7 +42,9 @@ public sealed class JwtFactory : WebApplicationFactory<Program>
         var claims = new List<Claim>();
         if (sub is not null) claims.Add(new Claim("sub", sub));
         if (tenant is not null) claims.Add(new Claim("tenant_id", tenant));
-        foreach (var r in roles ?? []) claims.Add(new Claim("roles", r));
+        // Keycloak puts realm roles in realm_access.roles (a JSON object claim); the Foundgine provider reads that shape.
+        var realmAccess = JsonSerializer.Serialize(new { roles = roles ?? [] });
+        claims.Add(new Claim("realm_access", realmAccess, JsonClaimValueTypes.Json));
         var now = DateTime.UtcNow;
         var jwt = new JwtSecurityToken(issuer ?? Issuer, audience ?? Audience, claims, now.AddMinutes(-10),
             expires ?? now.AddMinutes(5), new SigningCredentials(key ?? Key, SecurityAlgorithms.HmacSha256));

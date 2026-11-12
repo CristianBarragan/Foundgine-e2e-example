@@ -1,4 +1,7 @@
 <Solution>
-  <Folder Name="/src/"><Project Path="src/Crm.Api/Crm.Api.csproj" /></Folder>
+  <Folder Name="/src/">
+    <Project Path="src/Crm.Api/Crm.Api.csproj" />
+    <Project Path="src/Crm.Worker/Crm.Worker.csproj" />
+  </Folder>
   <Folder Name="/tests/"><Project Path="tests/Crm.Api.Tests/Crm.Api.Tests.csproj" /></Folder>
 </Solution>

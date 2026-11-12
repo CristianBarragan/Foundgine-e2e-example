@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://enterprise.example/schemas/erp-temporal-fulfilment-event.v1.json",
+  "title": "ERP fulfilment event signal payload",
+  "oneOf": [
+    {"type":"object","required":["tenantId","erpOrderId","erpShipmentId","status","version"],"properties":{"tenantId":{"type":"string","minLength":1},"erpOrderId":{"type":"string","minLength":1},"erpShipmentId":{"type":"string","minLength":1},"status":{"enum":["Packed","Shipped","InTransit","Delivered","Cancelled"]},"carrier":{"type":["string","null"]},"trackingNumber":{"type":["string","null"]},"version":{"type":"integer","minimum":1}},"additionalProperties":false},
+    {"type":"object","required":["tenantId","erpOrderId","erpInvoiceId","number","total","status","issuedAt","version"],"properties":{"tenantId":{"type":"string","minLength":1},"erpOrderId":{"type":"string","minLength":1},"erpInvoiceId":{"type":"string","minLength":1},"number":{"type":"string","minLength":1},"total":{"type":"number","minimum":0},"status":{"enum":["Issued","PartiallyPaid","Paid","Overdue","Void"]},"issuedAt":{"type":"string","format":"date-time"},"dueAt":{"type":["string","null"],"format":"date-time"},"version":{"type":"integer","minimum":1}},"additionalProperties":false},
+    {"type":"object","required":["tenantId","erpOrderId","erpInvoiceId","erpPaymentId","amount","status","version"],"properties":{"tenantId":{"type":"string","minLength":1},"erpOrderId":{"type":"string","minLength":1},"erpInvoiceId":{"type":"string","minLength":1},"erpPaymentId":{"type":"string","minLength":1},"amount":{"type":"number","minimum":0},"status":{"enum":["Received","Reconciled","Reversed"]},"version":{"type":"integer","minimum":1}},"additionalProperties":false}
+  ]
+}

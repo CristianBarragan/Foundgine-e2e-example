@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://enterprise.example/contracts/customer-to-cash-start.v1.json",
+  "title": "CustomerToCashWorkflowStart",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "tenantId",
+    "quoteId",
+    "opportunityId",
+    "crmCustomerId",
+    "correlationId",
+    "approvalRequired",
+    "quote"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "tenantId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "quoteId": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "opportunityId": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "crmCustomerId": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "correlationId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "approvalRequired": {
+      "type": "boolean"
+    },
+    "quote": {
+      "$ref": "quote-accepted.v1.json"
+    }
+  }
+}

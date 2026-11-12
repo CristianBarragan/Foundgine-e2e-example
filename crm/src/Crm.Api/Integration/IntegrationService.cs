@@ -5,16 +5,6 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Crm.Api.Integration;
 
-public sealed class MappingRow
-{
-    public int CrmCustomerId { get; set; }
-    public string TenantId { get; set; } = "";
-    public string? ErpCustomerId { get; set; }
-    public string Status { get; set; } = "";
-    public int Attempt { get; set; }
-    public string? LastError { get; set; }
-}
-
 /// <summary>
 /// Integration use cases with an explicit tenant argument (no HTTP context): used by Temporal activities and the
 /// admin reconcile endpoint. CRM and ERP identifiers are kept apart; this table is the only link.
@@ -27,8 +17,8 @@ public sealed class IntegrationService(IFoundgineRepository<Customer> customers)
     {
         var c = await customers.GetAsync(r.CrmCustomerId, ct);
         if (c is null || c.TenantId != r.TenantId) throw new CrmNotFoundException($"Customer {r.CrmCustomerId} not found.");
-        var attempt = await Db.Database.SqlQuery<int>($@"
-            SELECT attempt AS ""Value"" FROM customer_integration_mappings WHERE crm_customer_id = {c.Id}").FirstOrDefaultAsync(ct);
+        var attempt = await Db.Set<CustomerIntegrationMapping>().AsNoTracking().Where(m => m.CrmCustomerId == c.Id)
+            .Select(m => m.Attempt).FirstOrDefaultAsync(ct);
         return new CustomerSyncDto(1, c.TenantId, c.Id, Math.Max(attempt, 1), "", c.Kind, c.Name, c.Email, c.Phone, c.Status);
     }
 
@@ -38,24 +28,29 @@ public sealed class IntegrationService(IFoundgineRepository<Customer> customers)
         if (string.IsNullOrWhiteSpace(i.ErpCustomerId)) throw new CrmValidationException("erpCustomerId is required.");
         var m = await GetMappingAsync(i.TenantId, i.CrmCustomerId, ct)
                 ?? throw new CrmNotFoundException($"No mapping for customer {i.CrmCustomerId}.");
-        if (m.Status == "Active")
+        if (m.Status == MappingStatuses.Active)
         {
             if (m.ErpCustomerId == i.ErpCustomerId) return;
             throw new CrmConflictException($"Customer {i.CrmCustomerId} is already linked to a different ERP customer.");
         }
 
-        await Db.Database.ExecuteSqlInterpolatedAsync($@"
-            UPDATE customer_integration_mappings
-            SET status = 'Active', erp_customer_id = {i.ErpCustomerId}, last_error = NULL, updated_at = {DateTime.UtcNow}
-            WHERE crm_customer_id = {i.CrmCustomerId} AND tenant_id = {i.TenantId}", ct);
+        var now = DateTime.UtcNow;
+        var erpId = i.ErpCustomerId;
+        await Db.Set<CustomerIntegrationMapping>()
+            .Where(x => x.CrmCustomerId == i.CrmCustomerId && x.TenantId == i.TenantId)
+            .ExecuteUpdateAsync(u => u.SetProperty(x => x.Status, MappingStatuses.Active)
+                .SetProperty(x => x.ErpCustomerId, (string?)erpId).SetProperty(x => x.LastError, (string?)null)
+                .SetProperty(x => x.UpdatedAt, now), ct);
     }
 
     public async Task MarkSyncFailedAsync(MarkSyncFailedInput i, CancellationToken ct)
     {
-        await Db.Database.ExecuteSqlInterpolatedAsync($@"
-            UPDATE customer_integration_mappings
-            SET status = 'Failed', last_error = {i.Reason}, updated_at = {DateTime.UtcNow}
-            WHERE crm_customer_id = {i.CrmCustomerId} AND tenant_id = {i.TenantId} AND status <> 'Active'", ct);
+        var now = DateTime.UtcNow;
+        var reason = i.Reason;
+        await Db.Set<CustomerIntegrationMapping>()
+            .Where(x => x.CrmCustomerId == i.CrmCustomerId && x.TenantId == i.TenantId && x.Status != MappingStatuses.Active)
+            .ExecuteUpdateAsync(u => u.SetProperty(x => x.Status, MappingStatuses.Failed)
+                .SetProperty(x => x.LastError, (string?)reason).SetProperty(x => x.UpdatedAt, now), ct);
     }
 
     /// <summary>
@@ -65,30 +60,32 @@ public sealed class IntegrationService(IFoundgineRepository<Customer> customers)
     public async Task<int> ReconcileAsync(string tenantId, TimeSpan olderThan, CancellationToken ct)
     {
         var cutoff = DateTime.UtcNow - olderThan;
-        var ids = await Db.Database.SqlQuery<int>($@"
-            SELECT crm_customer_id AS ""Value"" FROM customer_integration_mappings
-            WHERE tenant_id = {tenantId} AND (status = 'Failed' OR (status = 'Pending' AND updated_at < {cutoff}))
-            ORDER BY crm_customer_id").ToListAsync(ct);
+        var stale = await Db.Set<CustomerIntegrationMapping>().AsNoTracking()
+            .Where(m => m.TenantId == tenantId &&
+                        (m.Status == MappingStatuses.Failed || (m.Status == MappingStatuses.Pending && m.UpdatedAt < cutoff)))
+            .OrderBy(m => m.CrmCustomerId)
+            .Select(m => new { m.CrmCustomerId, m.Attempt })
+            .ToListAsync(ct);
 
         await using var tx = await Db.Database.BeginTransactionAsync(ct);
-        foreach (var id in ids)
+        foreach (var row in stale)
         {
-            var c = await customers.GetAsync(id, ct);
+            var c = await customers.GetAsync(row.CrmCustomerId, ct);
             if (c is null) continue;
-            var attempt = await Db.Database.SqlQuery<int>($@"
-                UPDATE customer_integration_mappings SET attempt = attempt + 1, status = 'Pending', updated_at = {DateTime.UtcNow}
-                WHERE crm_customer_id = {id} RETURNING attempt AS ""Value""").SingleAsync(ct);
+            var attempt = row.Attempt + 1;
+            var now = DateTime.UtcNow;
+            var id = row.CrmCustomerId;
+            await Db.Set<CustomerIntegrationMapping>().Where(m => m.CrmCustomerId == id)
+                .ExecuteUpdateAsync(u => u.SetProperty(m => m.Attempt, attempt)
+                    .SetProperty(m => m.Status, MappingStatuses.Pending).SetProperty(m => m.UpdatedAt, now), ct);
             await Outbox.EnqueueOnboardingAsync(Db, c, attempt, ct);
         }
 
         await tx.CommitAsync(ct);
-        return ids.Count;
+        return stale.Count;
     }
 
-    public Task<MappingRow?> GetMappingAsync(string tenantId, int crmCustomerId, CancellationToken ct) =>
-        Db.Database.SqlQuery<MappingRow>($@"
-            SELECT crm_customer_id AS ""CrmCustomerId"", tenant_id AS ""TenantId"", erp_customer_id AS ""ErpCustomerId"",
-                   status AS ""Status"", attempt AS ""Attempt"", last_error AS ""LastError""
-            FROM customer_integration_mappings WHERE crm_customer_id = {crmCustomerId} AND tenant_id = {tenantId}")
-            .FirstOrDefaultAsync(ct);
+    public Task<CustomerIntegrationMapping?> GetMappingAsync(string tenantId, int crmCustomerId, CancellationToken ct) =>
+        Db.Set<CustomerIntegrationMapping>().AsNoTracking()
+            .FirstOrDefaultAsync(m => m.CrmCustomerId == crmCustomerId && m.TenantId == tenantId, ct);
 }

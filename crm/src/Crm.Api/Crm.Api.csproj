@@ -6,25 +6,23 @@
     <RootNamespace>Crm.Api</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Foundgine.Core" Version="3.3.2" />
-    <PackageReference Include="Foundgine.Runtime" Version="3.3.2" />
-    <PackageReference Include="Foundgine.Providers" Version="3.3.2" />
+    <!-- Single Foundgine dependency. Core and Runtime arrive transitively; the EF Core provider, ORM core and both
+         source generators (analyzers) are bundled inside this package. -->
+    <PackageReference Include="Foundgine.Providers" Version="3.3.3" />
+    <!-- Keycloak identity provider and Temporal workflow provider (bridge, process workflow, start/status endpoints). -->
+    <PackageReference Include="Foundgine.Extensions" Version="3.3.3" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.0" />
-    <PackageReference Include="Temporalio" Version="[1.7.0,2.0.0)" />
-    <PackageReference Include="Temporalio.Extensions.Hosting" Version="[1.7.0,2.0.0)" />
+    <PackageReference Include="Temporalio" Version="[1.21.1,2.0.0)" /> <!-- floor = what Foundgine.Extensions needs (avoids NU1605) -->
+    <PackageReference Include="Temporalio.Extensions.Hosting" Version="[1.18.0,2.0.0)" />
     <PackageReference Include="Temporalio.Extensions.OpenTelemetry" Version="[1.7.0,2.0.0)" />
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="[1.9.0,2.0.0)" />
     <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="[1.9.0,2.0.0)" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="[1.9.0,2.0.0)" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="[1.9.0,2.0.0)" />
-  </ItemGroup>
-  <ItemGroup>
-    <!-- Vendored from Foundgine source; see ../../foundgine-NOTICE.md -->
-    <ProjectReference Include="../../foundgine/Foundgine.Providers.Orm/Foundgine.Providers.Orm.csproj" />
-    <ProjectReference Include="../../foundgine/Foundgine.Providers.EntityFrameworkCore/Foundgine.Providers.EntityFrameworkCore.csproj" />
-  </ItemGroup>
-  <ItemGroup>
-    <EmbeddedResource Include="db/migrations/*.sql" />
   </ItemGroup>
 </Project>

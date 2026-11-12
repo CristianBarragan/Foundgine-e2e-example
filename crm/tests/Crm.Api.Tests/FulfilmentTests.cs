@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Crm.Api.Application;
+using Crm.Api.Domain;
 using Crm.Api.Integration;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;

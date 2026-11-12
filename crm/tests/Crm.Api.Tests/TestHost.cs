@@ -13,6 +13,7 @@ public sealed class CrmFactory : WebApplicationFactory<Program>
     protected override void ConfigureWebHost(Microsoft.AspNetCore.Hosting.IWebHostBuilder builder)
     {
         builder.UseSetting("Auth:DevHeaders", "true");
+        builder.UseSetting("Foundgine:Keycloak:EphemeralWarrantKey", "true");
         builder.ConfigureServices(s =>
         {
             s.RemoveAll<Crm.Api.Integration.IWorkflowStarter>();
@@ -46,26 +47,30 @@ public sealed class FakeStarter : Crm.Api.Integration.IWorkflowStarter
     public List<Crm.Api.Integration.CustomerSyncDto> Started { get; } = [];
     public List<Crm.Api.Integration.QuoteAcceptedDto> Quotes { get; } = [];
     public List<Crm.Api.Integration.ReturnRequestedDto> Returns { get; } = [];
+    public List<string?> Initiators { get; } = [];
     public bool Fail { get; set; }
 
-    public Task StartReturnProcessingAsync(Crm.Api.Integration.ReturnRequestedDto dto, CancellationToken ct)
+    public Task StartReturnProcessingAsync(Crm.Api.Integration.ReturnRequestedDto dto, CancellationToken ct, string? initiator = null)
     {
         if (Fail) throw new InvalidOperationException("temporal down");
         lock (Returns) Returns.Add(dto);
+        lock (Initiators) Initiators.Add(initiator);
         return Task.CompletedTask;
     }
 
-    public Task StartQuoteToOrderAsync(Crm.Api.Integration.QuoteAcceptedDto dto, CancellationToken ct)
+    public Task StartQuoteToOrderAsync(Crm.Api.Integration.QuoteAcceptedDto dto, CancellationToken ct, string? initiator = null)
     {
         if (Fail) throw new InvalidOperationException("temporal down");
         lock (Quotes) Quotes.Add(dto);
+        lock (Initiators) Initiators.Add(initiator);
         return Task.CompletedTask;
     }
 
-    public Task StartCustomerOnboardingAsync(Crm.Api.Integration.CustomerSyncDto dto, CancellationToken ct)
+    public Task StartCustomerOnboardingAsync(Crm.Api.Integration.CustomerSyncDto dto, CancellationToken ct, string? initiator = null)
     {
         if (Fail) throw new InvalidOperationException("temporal down");
         lock (Started) Started.Add(dto);
+        lock (Initiators) Initiators.Add(initiator);
         return Task.CompletedTask;
     }
 }
