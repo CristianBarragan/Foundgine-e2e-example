@@ -1,10 +1,13 @@
 package com.enterprise.erp.returns;
 
 import com.enterprise.erp.customer.ValidationFailedException;
+import com.enterprise.erp.inventory.ErpInventoryRepository;
+import com.enterprise.erp.order.SalesOrderLineRepository;
+import com.enterprise.erp.order.SalesOrderRepository;
+import com.enterprise.erp.order.SkuQuantity;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -16,47 +19,52 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Service
 public class ErpReturnService {
-    private final JdbcClient jdbc;
+    private final ErpReturnRepository returns;
+    private final ErpReturnLineRepository returnLines;
+    private final SalesOrderRepository orders;
+    private final SalesOrderLineRepository orderLines;
+    private final ErpInventoryRepository inventory;
 
-    public ErpReturnService(JdbcClient jdbc) { this.jdbc = jdbc; }
+    public ErpReturnService(ErpReturnRepository returns, ErpReturnLineRepository returnLines, SalesOrderRepository orders,
+                            SalesOrderLineRepository orderLines, ErpInventoryRepository inventory) {
+        this.returns = returns; this.returnLines = returnLines; this.orders = orders;
+        this.orderLines = orderLines; this.inventory = inventory;
+    }
 
     @Transactional
     public ErpReturnDecision authorize(ReturnRequest in) {
         var errors = ReturnPlanner.validate(in);
         if (!errors.isEmpty()) throw new ValidationFailedException(errors);
 
-        var existing = jdbc.sql("SELECT erp_return_id, status, note FROM erp_returns WHERE tenant_id = :t AND crm_return_id = :r")
-                .param("t", in.tenantId()).param("r", in.returnId())
-                .query((rs, i) -> new ErpReturnDecision(statusToDecision(rs.getString("status")), rs.getString("erp_return_id"), rs.getString("note"), false))
-                .optional();
-        if (existing.isPresent()) return existing.get();
+        var existing = returns.findByTenantIdAndCrmReturnId(in.tenantId(), in.returnId());
+        if (existing.isPresent()) {
+            var stored = existing.get();
+            return new ErpReturnDecision(statusToDecision(stored.getStatus()), stored.getErpReturnId(), stored.getNote(), false);
+        }
 
         // Lock the order for the whole decision: serialises concurrent returns against the same order.
-        var order = jdbc.sql("SELECT erp_customer_id, status FROM sales_orders WHERE tenant_id = :t AND erp_order_id = :o FOR UPDATE")
-                .param("t", in.tenantId()).param("o", in.erpOrderId())
-                .query((rs, i) -> new String[] {rs.getString("erp_customer_id"), rs.getString("status")}).optional();
+        var order = orders.lockByTenantAndId(in.tenantId(), in.erpOrderId());
 
-        String rejection = null;
+        String rejection;
         if (order.isEmpty()) rejection = "Order " + in.erpOrderId() + " not found.";
-        else if (!order.get()[0].equals(in.erpCustomerId())) rejection = "Order " + in.erpOrderId() + " does not belong to this customer.";
-        else if (!"Open".equals(order.get()[1])) rejection = "Order " + in.erpOrderId() + " is " + order.get()[1] + ".";
-        else rejection = ReturnPlanner.rejection(orderedQuantities(in), alreadyReturned(in), in.lines()).orElse(null);
+        else if (!order.get().getErpCustomerId().equals(in.erpCustomerId())) rejection = "Order " + in.erpOrderId() + " does not belong to this customer.";
+        else if (!"Open".equals(order.get().getStatus())) rejection = "Order " + in.erpOrderId() + " is " + order.get().getStatus() + ".";
+        else rejection = ReturnPlanner.rejection(
+                toMap(orderLines.orderedQuantities(in.tenantId(), in.erpOrderId())),
+                toMap(returns.returnedQuantities(in.tenantId(), in.erpOrderId())),
+                in.lines()).orElse(null);
 
         // A rejected return still needs the order FK; an unknown order cannot be stored, so answer without persisting.
         if (order.isEmpty()) return new ErpReturnDecision("Rejected", "", rejection, true);
 
-        String id = "RET-" + jdbc.sql("SELECT nextval('erp_return_seq')").query(Long.class).single();
+        String id = "RET-" + returns.nextReturnNumber();
         String status = rejection == null ? "Authorized" : "Rejected";
         String note = rejection == null ? "" : rejection;
-        int inserted = jdbc.sql("""
-                INSERT INTO erp_returns (erp_return_id, tenant_id, crm_return_id, erp_order_id, status, reason, note, correlation_id)
-                VALUES (:id, :t, :r, :o, :s, :reason, :note, :corr) ON CONFLICT (tenant_id, crm_return_id) DO NOTHING""")
-                .param("id", id).param("t", in.tenantId()).param("r", in.returnId()).param("o", in.erpOrderId()).param("s", status)
-                .param("reason", in.reason() == null ? "" : in.reason()).param("note", note).param("corr", in.correlationId()).update();
+        int inserted = returns.insertIfAbsent(id, in.tenantId(), in.returnId(), in.erpOrderId(), status,
+                in.reason() == null ? "" : in.reason(), note, in.correlationId());
         if (inserted == 0) throw new IllegalStateException("Concurrent return insert despite the order lock; retry.");
         for (var q : ReturnPlanner.quantities(in.lines()).entrySet())
-            jdbc.sql("INSERT INTO erp_return_lines (erp_return_id, sku, quantity) VALUES (:id, :sku, :q)")
-                    .param("id", id).param("sku", q.getKey()).param("q", q.getValue()).update();
+            returnLines.save(new ErpReturnLine(id, q.getKey(), q.getValue()));
         return new ErpReturnDecision(statusToDecision(status), id, note, true);
     }
 
@@ -65,39 +73,22 @@ public class ErpReturnService {
     public CompleteReturnResult complete(CompleteReturnRequest in) {
         if (in == null || blank(in.tenantId()) || blank(in.erpReturnId()))
             throw new ValidationFailedException(List.of("tenantId and erpReturnId are required."));
-        var status = jdbc.sql("SELECT status FROM erp_returns WHERE tenant_id = :t AND erp_return_id = :id FOR UPDATE")
-                .param("t", in.tenantId()).param("id", in.erpReturnId()).query(String.class).optional();
-        if (status.isEmpty()) throw new ValidationFailedException(List.of("Return " + in.erpReturnId() + " not found."));
-        if ("Completed".equals(status.get())) return new CompleteReturnResult(in.erpReturnId(), false);
-        if (!"Authorized".equals(status.get())) throw new ValidationFailedException(List.of("Return " + in.erpReturnId() + " is " + status.get() + "."));
+        var ret = returns.lockByTenantAndId(in.tenantId(), in.erpReturnId())
+                .orElseThrow(() -> new ValidationFailedException(List.of("Return " + in.erpReturnId() + " not found.")));
+        if ("Completed".equals(ret.getStatus())) return new CompleteReturnResult(in.erpReturnId(), false);
+        if (!"Authorized".equals(ret.getStatus())) throw new ValidationFailedException(List.of("Return " + in.erpReturnId() + " is " + ret.getStatus() + "."));
 
-        var lines = jdbc.sql("SELECT sku, quantity FROM erp_return_lines WHERE erp_return_id = :id ORDER BY sku")
-                .param("id", in.erpReturnId()).query((rs, i) -> new Object[] {rs.getString("sku"), rs.getInt("quantity")}).list();
-        for (var l : lines) {
-            int n = jdbc.sql("UPDATE erp_inventory SET on_hand = on_hand + :q WHERE tenant_id = :t AND sku = :sku")
-                    .param("q", l[1]).param("t", in.tenantId()).param("sku", l[0]).update();
-            if (n != 1) throw new ValidationFailedException(List.of("No inventory record for " + l[0] + "."));
+        for (var line : returnLines.findByErpReturnIdOrderBySku(in.erpReturnId())) {
+            if (inventory.restock(in.tenantId(), line.getSku(), line.getQuantity()) != 1)
+                throw new ValidationFailedException(List.of("No inventory record for " + line.getSku() + "."));
         }
-        jdbc.sql("UPDATE erp_returns SET status = 'Completed', updated_at = now() WHERE erp_return_id = :id")
-                .param("id", in.erpReturnId()).update();
+        ret.complete();
         return new CompleteReturnResult(in.erpReturnId(), true);
     }
 
-    private Map<String, Integer> orderedQuantities(ReturnRequest in) {
+    private static Map<String, Integer> toMap(List<SkuQuantity> rows) {
         var m = new HashMap<String, Integer>();
-        jdbc.sql("SELECT sku, sum(quantity) AS q FROM sales_order_lines WHERE erp_order_id = :o AND tenant_id = :t GROUP BY sku")
-                .param("o", in.erpOrderId()).param("t", in.tenantId())
-                .query((rs, i) -> { m.put(rs.getString("sku"), rs.getInt("q")); return 0; }).list();
-        return m;
-    }
-
-    private Map<String, Integer> alreadyReturned(ReturnRequest in) {
-        var m = new HashMap<String, Integer>();
-        jdbc.sql("""
-                SELECT l.sku, sum(l.quantity) AS q FROM erp_return_lines l JOIN erp_returns r ON r.erp_return_id = l.erp_return_id
-                WHERE r.tenant_id = :t AND r.erp_order_id = :o AND r.status IN ('Authorized', 'Completed') GROUP BY l.sku""")
-                .param("o", in.erpOrderId()).param("t", in.tenantId())
-                .query((rs, i) -> { m.put(rs.getString("sku"), rs.getInt("q")); return 0; }).list();
+        for (var r : rows) m.put(r.sku(), Math.toIntExact(r.quantity()));
         return m;
     }
 

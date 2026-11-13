@@ -14,18 +14,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.core.convert.converter.Converter;
-import org.springframework.http.HttpStatus;
 import org.springframework.security.core.GrantedAuthority;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
-import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
@@ -33,26 +30,33 @@ import org.springframework.web.server.ResponseStatusException;
 
 // Who may confirm receipt, and that tenant and sender come from the token only. The signal itself is the service's port.
 @SpringBootTest(properties = {
-        "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration,"
-                + "org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration,"
-                + "org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration"})
+	    "spring.autoconfigure.exclude=" +
+	        "org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration," +
+	        "org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration," +
+	        "org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration," +
+	        "org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration," +
+	        "org.springframework.boot.data.jpa.autoconfigure.DataJpaRepositoriesAutoConfiguration"
+	})
 @AutoConfigureMockMvc
-class ReturnControllerTest {
+class ReturnControllerTest extends com.enterprise.erp.NoDatabaseTestBase {
     private static final String URL = "/api/v1/returns/7/goods-received";
     private static final String LATE = "/api/v1/returns/7/received-late";
 
     @Autowired MockMvc mvc;
-    @MockitoBean org.springframework.jdbc.core.simple.JdbcClient jdbcClient;
     @MockitoBean GoodsReceivedService service;
     @MockitoBean ExpiredReturnService expired;
 
     // The jwt() post-processor bypasses the app's JwtAuthenticationConverter, so the ROLE_* authorities that the real
     // converter derives from realm_access.roles are set explicitly here (the same mapping SecurityConfig applies).
     private static RequestPostProcessor caller(String tenant, String... roles) {
-        return jwt().authorities((Converter<Jwt, Collection<GrantedAuthority>>) Arrays.stream(roles).map(r -> new SimpleGrantedAuthority("ROLE_" + r)).toList())
+        return jwt().authorities(Arrays.stream(roles)
+                .<GrantedAuthority>map(r -> new SimpleGrantedAuthority("ROLE_" + r))
+                .toList())
                 .jwt(j -> {
                     j.subject("wh-user");
-                    if (tenant != null) j.claim("tenant_id", tenant);
+                    if (tenant != null) {
+                        j.claim("tenant_id", tenant);
+                    }
                     j.claim("realm_access", Map.of("roles", List.of(roles)));
                 });
     }
@@ -99,10 +103,18 @@ class ReturnControllerTest {
     }
 
     @Test void unknownReturnIsNotFoundAndConflictsAreReported() throws Exception {
-        when(service.receive("acme", 7, "wh-user")).thenThrow(new ResponseStatusException(HttpStatus.NOT_FOUND, "Return not found."));
-        mvc.perform(post(URL).with(caller("acme", "erp-inventory"))).andExpect(status().isNotFound());
-        when(service.receive("acme", 7, "wh-user")).thenThrow(new ResponseStatusException(HttpStatus.CONFLICT, "x"));
-        mvc.perform(post(URL).with(caller("acme", "erp-inventory"))).andExpect(status().isConflict());
+        when(service.receive("acme", 7, "wh-user"))
+                .thenThrow(
+                        new ResponseStatusException(
+                                HttpStatus.NOT_FOUND, "Return not found."),
+                        new ResponseStatusException(
+                                HttpStatus.CONFLICT, "Invalid return state."));
+
+        mvc.perform(post(URL).with(caller("acme", "erp-inventory")))
+                .andExpect(status().isNotFound());
+
+        mvc.perform(post(URL).with(caller("acme", "erp-inventory")))
+                .andExpect(status().isConflict());
     }
 
     @Test void badReturnIdIsRejectedBeforeTheService() throws Exception {

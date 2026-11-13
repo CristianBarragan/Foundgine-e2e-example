@@ -1,11 +1,11 @@
 using System.Text.RegularExpressions;
 using Crm.Api.Domain;
+using Crm.Api.Infrastructure;
 using Foundgine.Core.Semantic.IR;
 using Foundgine.Core.Semantic.Query;
 using Foundgine.Providers.Aot;
 using Foundgine.Providers.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
-using Npgsql;
 
 namespace Crm.Api.Application;
 
@@ -46,7 +46,7 @@ public sealed partial class CustomerService(
             await tx.CommitAsync(ct);
             return saved;
         }
-        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: "23505" })
+        catch (DbUpdateException ex) when (DbErrors.IsUniqueViolation(ex))
         {
             throw new CrmConflictException("A customer with this email already exists.");
         }
@@ -79,7 +79,7 @@ public sealed partial class CustomerService(
         {
             return await repo.UpdateAsync(updated, ct);
         }
-        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: "23505" })
+        catch (DbUpdateException ex) when (DbErrors.IsUniqueViolation(ex))
         {
             throw new CrmConflictException("A customer with this email already exists.");
         }
@@ -101,8 +101,8 @@ public sealed partial class CustomerService(
         {
             var pattern = $"%{EscapeLike(q.Trim())}%";
             var query = repo.Query().Where(c => c.TenantId == tenantId &&
-                                                (EF.Functions.ILike(c.Name, pattern) ||
-                                                 EF.Functions.ILike(c.Email, pattern)));
+                                                (EF.Functions.Like(c.Name, pattern, "\\") ||
+                                                 EF.Functions.Like(c.Email, pattern, "\\")));
             if (!string.IsNullOrWhiteSpace(status)) query = query.Where(c => c.Status == status);
             if (!string.IsNullOrWhiteSpace(kind)) query = query.Where(c => c.Kind == kind);
             var rows = await query.OrderBy(c => c.Name).ThenBy(c => c.Id).Skip(skip).Take(take).ToListAsync(ct);
@@ -143,7 +143,7 @@ public sealed partial class CustomerService(
         ["UpdatedAt"] = c.UpdatedAt, ["UpdatedBy"] = c.UpdatedBy
     };
 
-    private static string EscapeLike(string s) => s.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
+    private static string EscapeLike(string s) => s.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_").Replace("[", "\\[");
 
     [GeneratedRegex(@"^[^@\s]+@[^@\s]+\.[^@\s]+$")]
     private static partial Regex EmailPattern();

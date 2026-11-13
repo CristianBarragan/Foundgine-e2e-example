@@ -7,9 +7,9 @@ ID = "20261113000000_InitialCrm"
 NS = "Crm.Api.Infrastructure.Migrations"
 CTX = "FoundgineDbContext"
 
-def vc(n): return f"character varying({n})"
-T_INT, T_LONG, T_TS, T_BOOL, T_UUID, T_TEXT, T_JSONB = "integer", "bigint", "timestamp with time zone", "boolean", "uuid", "text", "jsonb"
-def num(): return "numeric(14,2)"
+def vc(n): return f"nvarchar({n})"
+T_INT, T_LONG, T_TS, T_BOOL, T_UUID, T_TEXT, T_JSONB = "int", "bigint", "datetime2", "bit", "uniqueidentifier", "nvarchar(max)", "nvarchar(max)"
+def num(): return "decimal(14,2)"
 
 class P:  # property
     def __init__(s, name, clr, col, sql, nullable=False, maxlen=None, identity=False, never=False, default_sql=None, prec=None):
@@ -120,7 +120,7 @@ ent("Payment", "payments",
 ent("OutboxMessage", "outbox_messages",
     [P("Id", "Guid", "id", T_UUID, never=True), TENANT(), S("Type", "type", 100), I("AggregateId", "aggregate_id"), I("Attempt", "attempt"),
      P("Payload", "string", "payload", T_JSONB), D("CreatedAt", "created_at"), D("PublishedAt", "published_at", True), I("PublishAttempts", "publish_attempts"),
-     P("NextAttemptAt", "DateTime", "next_attempt_at", T_TS, default_sql="now()"), P("LastError", "string", "last_error", T_TEXT, True)],
+     P("NextAttemptAt", "DateTime", "next_attempt_at", T_TS, default_sql="SYSUTCDATETIME()"), P("LastError", "string", "last_error", T_TEXT, True)],
     ["Id"], "outbox_messages_pkey",
     idx=[("ix_outbox_unpublished", ["NextAttemptAt"], False, "published_at IS NULL", None)])
 
@@ -144,7 +144,7 @@ def column_line(p):
     if p.default_sql: args.append(f'defaultValueSql: "{p.default_sql}"')
     clr = p.clr + ("?" if p.nullable and p.clr not in ("string",) else "")
     line = f"{p.col} = table.Column<{clr}>({', '.join(args)})"
-    if p.identity: line += '\n                        .Annotation("Npgsql:ValueGenerationStrategy", NpgsqlValueGenerationStrategy.IdentityByDefaultColumn)'
+    if p.identity: line += '\n                        .Annotation("SqlServer:Identity", "1, 1")'
     return line
 
 up = []
@@ -185,15 +185,13 @@ down = "\n".join(f'            migrationBuilder.DropTable(name: "{e["table"]}");
 
 migration = f'''using System;
 using Microsoft.EntityFrameworkCore.Migrations;
-using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
 #nullable disable
 
 namespace {NS};
 
 /// <summary>
-/// Initial CRM schema. A database created by the legacy SQL scripts (schema_migrations table) is baselined onto this
-/// migration by DatabaseMigrator instead of running it. Generated from the schema spec in tools/gen_migration.py.
+/// Initial CRM schema for SQL Server. Generated from the schema spec in tools/gen_migration.py.
 /// </summary>
 public partial class InitialCrm : Migration
 {{
@@ -225,7 +223,7 @@ def model_body(indent):
             if p.default_sql: line += f'.HasDefaultValueSql("{p.default_sql}")'
             L.append(line + ";")
             if p.identity:
-                L.append(f'    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<{p.clr}>("{p.name}"));')
+                L.append(f'    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<{p.clr}>("{p.name}"));')
         keys = ", ".join(f'"{k}"' for k in e["pk"])
         L.append(f'    b.HasKey({keys}).HasName("{e["pkname"]}");')
         for name, props, unique, filt, desc in e["idx"]:
@@ -253,9 +251,9 @@ def model_body(indent):
 
 HEAD = '''            modelBuilder
                 .HasAnnotation("ProductVersion", "10.0.0")
-                .HasAnnotation("Relational:MaxIdentifierLength", 63);
+                .HasAnnotation("Relational:MaxIdentifierLength", 128);
 
-            NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
+            SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
 '''
 usings = '''using System;
@@ -263,7 +261,6 @@ using Foundgine.Providers.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
-using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
 #nullable disable
 '''

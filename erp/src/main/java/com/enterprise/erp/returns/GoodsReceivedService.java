@@ -2,7 +2,6 @@ package com.enterprise.erp.returns;
 
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.HttpStatus;
-import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -15,17 +14,17 @@ import org.springframework.web.server.ResponseStatusException;
 public class GoodsReceivedService {
     public enum Outcome { SIGNALLED, ALREADY_COMPLETED }
 
-    private final JdbcClient jdbc;
+    private final ErpReturnRepository returns;
     private final ObjectProvider<ReturnSignals> signals;
 
-    public GoodsReceivedService(JdbcClient jdbc, ObjectProvider<ReturnSignals> signals) {
-        this.jdbc = jdbc;
+    public GoodsReceivedService(ErpReturnRepository returns, ObjectProvider<ReturnSignals> signals) {
+        this.returns = returns;
         this.signals = signals;
     }
 
     public Outcome receive(String tenantId, int crmReturnId, String receivedBy) {
-        var status = jdbc.sql("SELECT status FROM erp_returns WHERE tenant_id = :t AND crm_return_id = :r")
-                .param("t", tenantId).param("r", crmReturnId).query(String.class).optional();
+        // Deliberately not @Transactional: the signal below is a remote call and must not hold a database connection.
+        var status = returns.findByTenantIdAndCrmReturnId(tenantId, crmReturnId).map(ErpReturn::getStatus);
         switch (GoodsReceivedPlanner.decide(status.orElse(null))) {
             case NOT_FOUND -> throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Return not found.");
             case NOT_RECEIVABLE -> throw new ResponseStatusException(HttpStatus.CONFLICT, "Return is " + status.get() + "; goods cannot be received.");

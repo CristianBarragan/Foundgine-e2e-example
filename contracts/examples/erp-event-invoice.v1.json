@@ -1,0 +1,11 @@
+{
+  "tenantId": "acme",
+  "erpOrderId": "SO-5001",
+  "erpInvoiceId": "INV-0001",
+  "number": "2026-0001",
+  "total": 200.00,
+  "status": "Issued",
+  "issuedAt": "2026-11-13T01:00:00Z",
+  "dueAt": "2026-12-13T01:00:00Z",
+  "version": 1
+}

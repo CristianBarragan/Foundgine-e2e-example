@@ -80,3 +80,11 @@ The ERP exposes authenticated commands under `/api/v1`:
 - `POST /payments/{paymentId}/reverse` (`erp-finance`): reverses a received or reconciled payment and recomputes the invoice status.
 
 All tenant scope is read from the validated JWT `tenant_id` claim. Every write and corresponding ERP Temporal outbox event execute in the same database transaction. The relay delivers versioned facts to the `CustomerToCash:{tenant}:{quoteId}` C# workflow; delivery is at-least-once and entity-version guarded.
+
+## Shipping consumes reserved stock (Checkpoint 16)
+
+- The first transition of an order's shipment to `Shipped` consumes the order's reservation: `erp_inventory.on_hand` and `reserved` both drop by the reserved quantity, and `stock_reservations.consumed` becomes true. Packed shipments change nothing.
+- Once only: a retried `Shipped` transition is a no-op, and a second shipment of the same order finds no unconsumed reservation. Shipments are whole-order, not per-line.
+- The order row is locked first (same order as `cancelOrder`); only an `Open` order can ship, so a cancelled order cannot.
+- `cancelOrder` releases only reservations that are neither released nor consumed, so stock that already left the warehouse is never released again. The database rejects `released AND consumed` and negative `reserved`.
+- Cancelling a Packed shipment keeps the reservation (the order is still open). Cancelling a shipment after it shipped does not restock: that is a return.

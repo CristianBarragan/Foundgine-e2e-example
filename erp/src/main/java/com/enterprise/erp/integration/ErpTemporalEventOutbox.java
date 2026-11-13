@@ -1,20 +1,31 @@
 package com.enterprise.erp.integration;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.enterprise.erp.order.SalesOrderRepository;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
-import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Append ERP-owned lifecycle facts in the same transaction as the corresponding domain write. */
+/**
+ * Append ERP-owned lifecycle facts in the same transaction as the corresponding domain write, and hand them to the relay
+ * ({@link TemporalFulfilmentEventPublisher}) with an at-least-once lease: {@link #claimBatch} leases due events,
+ * {@link #markPublished} settles one, {@link #markFailed} schedules its retry.
+ */
 @Service
 public class ErpTemporalEventOutbox {
-    private final JdbcClient jdbc;
+    private final ErpOutboxEventRepository events;
+    private final SalesOrderRepository orders;
     private final ObjectMapper mapper;
-    public ErpTemporalEventOutbox(JdbcClient jdbc, ObjectMapper mapper) { this.jdbc = jdbc; this.mapper = mapper; }
+    public ErpTemporalEventOutbox(ErpOutboxEventRepository events, SalesOrderRepository orders, ObjectMapper mapper) {
+        this.events = events; this.orders = orders; this.mapper = mapper;
+    }
+
+    /** An event leased to the relay: what it needs to start the projection workflow and signal the parent. */
+    public record Leased(UUID eventId, String tenantId, int quoteId, String eventType, String payload) {}
 
     @Transactional public UUID shipment(ShipmentEvent event) {
         validate(event.tenantId(), event.erpOrderId(), event.erpShipmentId(), event.version());
@@ -38,24 +49,40 @@ public class ErpTemporalEventOutbox {
     }
 
     private UUID append(String type, String tenant, String orderId, String entityId, int version, Object payload) {
-        int quoteId = jdbc.sql("SELECT crm_quote_id FROM sales_orders WHERE tenant_id=:tenant AND erp_order_id=:order")
-            .param("tenant", tenant).param("order", orderId).query(Integer.class).optional()
+        int quoteId = orders.findCrmQuoteId(tenant, orderId)
             .orElseThrow(() -> new IllegalArgumentException("ERP order not found for tenant."));
         final String json;
         try { json = mapper.writeValueAsString(payload); }
-        catch (JsonProcessingException e) { throw new IllegalStateException("Could not serialize ERP temporal event.", e); }
+        catch (JacksonException e) { throw new IllegalStateException("Could not serialize ERP temporal event.", e); }
         UUID id = UUID.randomUUID();
-        return jdbc.sql("""
-            INSERT INTO erp_temporal_event_outbox
-                (event_id, tenant_id, crm_quote_id, erp_order_id, event_type, entity_id, entity_version, payload)
-            VALUES (:id, :tenant, :quote, :order, :type, :entity, :version, CAST(:payload AS jsonb))
-            ON CONFLICT (tenant_id, event_type, entity_id, entity_version)
-            DO UPDATE SET event_id = erp_temporal_event_outbox.event_id
-            RETURNING event_id
-            """).param("id", id).param("tenant", tenant).param("quote", quoteId).param("order", orderId)
-            .param("type", type).param("entity", entityId).param("version", version).param("payload", json)
-            .query(UUID.class).single();
+        if (events.insertIfAbsent(id, tenant, quoteId, orderId, type, entityId, version, json) == 1) return id;
+        // Already appended (a retry, or a concurrent identical append): answer with the existing event's id.
+        return events.findEventId(tenant, type, entityId, version)
+            .orElseThrow(() -> new IllegalStateException("Outbox event " + type + "/" + entityId + "/v" + version + " vanished after a conflict."));
     }
+
+    /**
+     * Leases up to 50 due events for 30 seconds and counts the attempt. The select locks the rows and the lease update runs
+     * in the same transaction, so two relay instances never lease the same event; the lease is committed before any
+     * Temporal call is made.
+     */
+    @Transactional
+    public List<Leased> claimBatch() {
+        List<Object[]> rows = events.lockDue();
+        if (rows.isEmpty()) return List.of();
+        List<Leased> claimed = rows.stream()
+            .map(r -> new Leased(UUID.fromString(String.valueOf(r[0])), (String) r[1], ((Number) r[2]).intValue(), (String) r[3], (String) r[4]))
+            .toList();
+        events.lease(claimed.stream().map(Leased::eventId).toList());
+        return claimed;
+    }
+
+    @Transactional
+    public void markPublished(UUID eventId) { events.markPublished(eventId); }
+
+    @Transactional
+    public void markFailed(UUID eventId, String error) { events.markFailed(eventId, error); }
+
     private static void validate(String tenant, String order, String entity, int version) {
         if (tenant == null || tenant.isBlank() || order == null || order.isBlank() || entity == null || entity.isBlank() || version < 1)
             throw new IllegalArgumentException("tenantId, erpOrderId, entity id and positive version are required.");
