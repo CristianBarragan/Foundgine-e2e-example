@@ -1,0 +1,9 @@
+{
+  "tenantId": "acme",
+  "erpOrderId": "SO-5001",
+  "erpInvoiceId": "INV-0001",
+  "erpPaymentId": "PAY-0001",
+  "amount": 200.00,
+  "status": "Reconciled",
+  "version": 2
+}

@@ -35,7 +35,7 @@ public sealed class QuoteService(
             TenantId = opp.TenantId, OpportunityId = opp.Id, CustomerId = opp.CustomerId, Status = QuoteStatuses.Draft,
             Total = Total(items), CreatedAt = now, CreatedBy = tenant.UserId, UpdatedAt = now, UpdatedBy = tenant.UserId
         }, ct);
-        var saved = await AddLinesAsync(q, items, ct);
+        IReadOnlyList<QuoteLine> saved = await AddLinesAsync(q, items, ct);
         await tx.CommitAsync(ct);
         return new QuoteView(q, saved);
     }

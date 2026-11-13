@@ -1,6 +1,6 @@
 using System.Text.Json;
-using Npgsql;
 using Crm.Api.Domain;
+using Crm.Api.Infrastructure;
 using Crm.Api.Integration;
 using Foundgine.Providers.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
@@ -58,17 +58,18 @@ public sealed class FulfilmentService(IFoundgineRepository<Quote> quotes, IFound
         string carrier = i.Carrier ?? "", tracking = i.TrackingNumber ?? "";
         var (tenantId, erpId, status, version) = (i.TenantId, i.ErpShipmentId, i.Status, i.Version);
         var set = Db.Set<Shipment>();
-        var updated = await set
+        Task<int> ApplyIfNewer() => set
             .Where(s => s.TenantId == tenantId && s.ErpShipmentId == erpId && s.QuoteId == quoteId && s.Version < version)
             .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, status).SetProperty(s => s.Carrier, carrier)
                 .SetProperty(s => s.TrackingNumber, tracking).SetProperty(s => s.Version, version)
                 .SetProperty(s => s.UpdatedAt, now), ct);
-        if (updated == 0 && !await set.AnyAsync(s => s.TenantId == tenantId && s.ErpShipmentId == erpId, ct))
-            await InsertIfAbsentAsync(new Shipment
+        if (await ApplyIfNewer() == 0 && !await set.AnyAsync(s => s.TenantId == tenantId && s.ErpShipmentId == erpId, ct) &&
+            !await InsertIfAbsentAsync(new Shipment
             {
                 TenantId = tenantId, ErpShipmentId = erpId, QuoteId = quoteId, ErpOrderId = i.ErpOrderId,
                 Status = status, Carrier = carrier, TrackingNumber = tracking, Version = version, UpdatedAt = now
-            }, ct);
+            }, ct))
+            await ApplyIfNewer(); // lost the insert race to a concurrent delivery that may hold an OLDER version
     }
 
     public async Task RecordInvoiceAsync(RecordInvoiceInput i, CancellationToken ct)
@@ -85,18 +86,19 @@ public sealed class FulfilmentService(IFoundgineRepository<Quote> quotes, IFound
         DateTime? due = i.DueAt?.ToUniversalTime();
         var (tenantId, erpId, number, total, status, version) = (i.TenantId, i.ErpInvoiceId, i.Number, i.Total, i.Status, i.Version);
         var set = Db.Set<Invoice>();
-        var updated = await set
+        Task<int> ApplyIfNewer() => set
             .Where(x => x.TenantId == tenantId && x.ErpInvoiceId == erpId && x.QuoteId == quoteId && x.Version < version)
             .ExecuteUpdateAsync(u => u.SetProperty(x => x.Number, number).SetProperty(x => x.Total, total)
                 .SetProperty(x => x.Status, status).SetProperty(x => x.IssuedAt, issued).SetProperty(x => x.DueAt, due)
                 .SetProperty(x => x.Version, version).SetProperty(x => x.UpdatedAt, now), ct);
-        if (updated == 0 && !await set.AnyAsync(x => x.TenantId == tenantId && x.ErpInvoiceId == erpId, ct))
-            await InsertIfAbsentAsync(new Invoice
+        if (await ApplyIfNewer() == 0 && !await set.AnyAsync(x => x.TenantId == tenantId && x.ErpInvoiceId == erpId, ct) &&
+            !await InsertIfAbsentAsync(new Invoice
             {
                 TenantId = tenantId, ErpInvoiceId = erpId, QuoteId = quoteId, CustomerId = q.CustomerId,
                 ErpOrderId = i.ErpOrderId, Number = number, Total = total, Status = status, IssuedAt = issued,
                 DueAt = due, Version = version, UpdatedAt = now
-            }, ct);
+            }, ct))
+            await ApplyIfNewer(); // lost the insert race to a concurrent delivery that may hold an OLDER version
     }
 
     public async Task RecordPaymentAsync(RecordPaymentInput i, CancellationToken ct)
@@ -110,16 +112,17 @@ public sealed class FulfilmentService(IFoundgineRepository<Quote> quotes, IFound
         var now = DateTime.UtcNow;
         var (tenantId, erpId, amount, status, version) = (i.TenantId, i.ErpPaymentId, i.Amount, i.Status, i.Version);
         var set = Db.Set<Payment>();
-        var updated = await set
+        Task<int> ApplyIfNewer() => set
             .Where(x => x.TenantId == tenantId && x.ErpPaymentId == erpId && x.QuoteId == quoteId && x.Version < version)
             .ExecuteUpdateAsync(u => u.SetProperty(x => x.Amount, amount).SetProperty(x => x.Status, status)
                 .SetProperty(x => x.Version, version).SetProperty(x => x.UpdatedAt, now), ct);
-        if (updated == 0 && !await set.AnyAsync(x => x.TenantId == tenantId && x.ErpPaymentId == erpId, ct))
-            await InsertIfAbsentAsync(new Payment
+        if (await ApplyIfNewer() == 0 && !await set.AnyAsync(x => x.TenantId == tenantId && x.ErpPaymentId == erpId, ct) &&
+            !await InsertIfAbsentAsync(new Payment
             {
                 TenantId = tenantId, ErpPaymentId = erpId, ErpInvoiceId = i.ErpInvoiceId, QuoteId = quoteId,
                 Amount = amount, Status = status, Version = version, UpdatedAt = now
-            }, ct);
+            }, ct))
+            await ApplyIfNewer(); // lost the insert race to a concurrent delivery that may hold an OLDER version
     }
 
     // ---- Reads (current tenant) -----------------------------------------------------------------------------------
@@ -162,9 +165,9 @@ public sealed class FulfilmentService(IFoundgineRepository<Quote> quotes, IFound
         var t = q.TenantId;
         await using var tx = await Db.Database.BeginTransactionAsync(ct);
         // Serialise concurrent return requests for the same quote so the quantity cap below cannot be raced.
-        // EF has no row-lock hint, so this is the one raw statement; it still materialises the EF entity.
+        // EF has no row-lock hint, so this is the one raw statement (UPDLOCK = SQL Server's FOR UPDATE); it still materialises the EF entity.
         await Db.Set<Quote>()
-            .FromSql($"SELECT * FROM quotes WHERE quote_id = {quoteId} AND tenant_id = {t} FOR UPDATE")
+            .FromSql($"SELECT * FROM quotes WITH (UPDLOCK, ROWLOCK) WHERE quote_id = {quoteId} AND tenant_id = {t}")
             .AsNoTracking().ToListAsync(ct);
         var quoted = await Db.Set<QuoteLine>().AsNoTracking().Where(l => l.QuoteId == quoteId && l.TenantId == t)
             .GroupBy(l => l.Sku).Select(g => new { Sku = g.Key, Qty = g.Sum(l => (long)l.Quantity) })
@@ -263,16 +266,22 @@ public sealed class FulfilmentService(IFoundgineRepository<Quote> quotes, IFound
 
     // ---- helpers --------------------------------------------------------------------------------------------------
 
-    private async Task InsertIfAbsentAsync<T>(T row, CancellationToken ct) where T : class
+    /// <summary>
+    /// Inserts the row; returns false when a concurrent delivery inserted the same key first. The winner may hold an
+    /// OLDER version than <paramref name="row"/> (the relay starts one projection workflow per event and they run in
+    /// parallel), so the caller must re-apply its version-guarded update instead of assuming it lost to a newer one.
+    /// </summary>
+    private async Task<bool> InsertIfAbsentAsync<T>(T row, CancellationToken ct) where T : class
     {
         Db.Set<T>().Add(row);
         try
         {
             await Db.SaveChangesAsync(ct);
+            return true;
         }
-        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: "23505" })
+        catch (DbUpdateException ex) when (DbErrors.IsUniqueViolation(ex))
         {
-            // a concurrent delivery inserted it first; it carries the same or a newer version
+            return false;
         }
         finally
         {

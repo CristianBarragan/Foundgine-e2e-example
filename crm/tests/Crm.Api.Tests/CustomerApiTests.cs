@@ -3,8 +3,8 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Xunit;
 
-// Need a PostgreSQL database: set CRM_TEST_CONNECTION, e.g.
-//   Host=localhost;Port=5433;Database=crm;Username=crm;Password=crm_dev_pw
+// Need a SQL Server database: set CRM_TEST_CONNECTION, e.g.
+//   Server=localhost,1433;Database=crm_test;User Id=sa;Password=Crm_dev_pw1!;TrustServerCertificate=True
 public class CustomerApiTests(CrmFactory f) : IClassFixture<CrmFactory>
 {
     private static readonly string Tenant = $"t-{Guid.NewGuid():N}";

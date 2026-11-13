@@ -2,7 +2,6 @@ package com.enterprise.erp.returns;
 
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.HttpStatus;
-import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -16,30 +15,29 @@ import org.springframework.web.server.ResponseStatusException;
 public class ExpiredReturnService {
     public enum Outcome { STARTED, ALREADY_IN_PROGRESS, ALREADY_COMPLETED }
 
-    private final JdbcClient jdbc;
+    private final ErpReturnRepository returns;
     private final ObjectProvider<ReturnResolutions> resolutions;
 
-    public ExpiredReturnService(JdbcClient jdbc, ObjectProvider<ReturnResolutions> resolutions) {
-        this.jdbc = jdbc;
+    public ExpiredReturnService(ErpReturnRepository returns, ObjectProvider<ReturnResolutions> resolutions) {
+        this.returns = returns;
         this.resolutions = resolutions;
     }
 
     public Outcome resolveReceivedLate(String tenantId, int crmReturnId, String resolvedBy) {
-        var row = jdbc.sql("SELECT erp_return_id, status FROM erp_returns WHERE tenant_id = :t AND crm_return_id = :r")
-                .param("t", tenantId).param("r", crmReturnId)
-                .query((rs, i) -> new String[] {rs.getString("erp_return_id"), rs.getString("status")}).optional();
+        // Deliberately not @Transactional: starting the workflow below is a remote call and must not hold a database connection.
+        var row = returns.findByTenantIdAndCrmReturnId(tenantId, crmReturnId);
         var port = resolutions.getIfAvailable();
-        var plan = ExpiredReturnPlanner.decide(row.map(r -> r[1]).orElse(null), () -> {
+        var plan = ExpiredReturnPlanner.decide(row.map(ErpReturn::getStatus).orElse(null), () -> {
             if (port == null) throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Workflow integration is disabled (temporal.enabled=false).");
             return port.originalWorkflow(tenantId, crmReturnId);
         });
         switch (plan) {
             case NOT_FOUND -> throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Return not found.");
-            case NOT_RESOLVABLE -> throw new ResponseStatusException(HttpStatus.CONFLICT, "Return is " + row.get()[1] + "; there is nothing to resolve.");
+            case NOT_RESOLVABLE -> throw new ResponseStatusException(HttpStatus.CONFLICT, "Return is " + row.get().getStatus() + "; there is nothing to resolve.");
             case STILL_WAITING -> throw new ResponseStatusException(HttpStatus.CONFLICT, "The return is still waiting for goods; confirm receipt with goods-received instead.");
             case ALREADY_COMPLETED -> { return Outcome.ALREADY_COMPLETED; }
             case RESOLVE -> { /* below */ }
         }
-        return port.resolveReceivedLate(tenantId, crmReturnId, row.get()[0], resolvedBy) ? Outcome.STARTED : Outcome.ALREADY_IN_PROGRESS;
+        return port.resolveReceivedLate(tenantId, crmReturnId, row.get().getErpReturnId(), resolvedBy) ? Outcome.STARTED : Outcome.ALREADY_IN_PROGRESS;
     }
 }

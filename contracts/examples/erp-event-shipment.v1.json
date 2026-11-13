@@ -1,0 +1,9 @@
+{
+  "tenantId": "acme",
+  "erpOrderId": "SO-5001",
+  "erpShipmentId": "SHP-0001",
+  "status": "Shipped",
+  "carrier": "NZ Post",
+  "trackingNumber": "TRK-100",
+  "version": 2
+}

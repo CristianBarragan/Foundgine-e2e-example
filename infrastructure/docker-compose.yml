@@ -1,11 +1,18 @@
 name: enterprise-platform
 services:
+  # CRM: SQL Server (EF Core). The crm database is created by the CRM's first migration run; nothing to set up by hand.
   crm-db:
-    image: postgres:17
-    environment: { POSTGRES_DB: crm, POSTGRES_USER: crm, POSTGRES_PASSWORD: "${CRM_DB_PASSWORD:-crm_dev_pw}" }
-    ports: ["5433:5432"]
-    volumes: [crm-db-data:/var/lib/postgresql/data]
-    healthcheck: { test: ["CMD-SHELL", "pg_isready -U crm -d crm"], interval: 5s, timeout: 3s, retries: 20 }
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment: { ACCEPT_EULA: "Y", MSSQL_SA_PASSWORD: "${CRM_DB_PASSWORD:-Crm_dev_pw1!}" }
+    ports: ["1433:1433"]
+    volumes: [crm-db-data:/var/opt/mssql]
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q \"SELECT 1\" -b -o /dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+  # ERP: PostgreSQL (JPA / Hibernate). Flyway creates the schema.
   erp-db:
     image: postgres:17
     environment: { POSTGRES_DB: erp, POSTGRES_USER: erp, POSTGRES_PASSWORD: "${ERP_DB_PASSWORD:-erp_dev_pw}" }

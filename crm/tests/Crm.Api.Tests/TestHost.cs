@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
-/// <summary>Test host with dev-header auth. DB-backed tests need CRM_TEST_CONNECTION (e.g. the compose crm-db).</summary>
+/// <summary>Test host with dev-header auth. DB-backed tests need CRM_TEST_CONNECTION (e.g. the compose crm-db: Server=localhost,1433;Database=crm_test;User Id=sa;Password=Crm_dev_pw1!;TrustServerCertificate=True).</summary>
 public sealed class CrmFactory : WebApplicationFactory<Program>
 {
     public FakeStarter Starter { get; } = new();

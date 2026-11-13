@@ -9,21 +9,23 @@ import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 // Token validation itself (issuer, audience, signature) is the resource server's; these tests pin our rules:
 // who may reach what, and how roles and tenant are read from the claims.
 @SpringBootTest(properties = {
-        "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration,"
-                + "org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration,"
-                + "org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration"})
+	    "spring.autoconfigure.exclude=" +
+	        "org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration," +
+	        "org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration," +
+	        "org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration," +
+	        "org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration," +
+	        "org.springframework.boot.data.jpa.autoconfigure.DataJpaRepositoriesAutoConfiguration"
+	})
 @AutoConfigureMockMvc
-class ErpSecurityTest {
+class ErpSecurityTest extends com.enterprise.erp.NoDatabaseTestBase {
     @Autowired MockMvc mvc;
-    @MockitoBean org.springframework.jdbc.core.simple.JdbcClient jdbcClient;
 
     @Test void healthNeedsNoToken() throws Exception { mvc.perform(get("/api/v1/health")).andExpect(status().isOk()); }
 

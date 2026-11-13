@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://enterprise.example/schemas/quote-to-order-result.v1.json",
+  "title": "Result of the Java QuoteToOrderWorkflow, consumed by the C# CustomerToCashWorkflow",
+  "type": "object",
+  "required": ["status", "erpOrderId", "reason"],
+  "properties": {
+    "status": { "enum": ["Completed", "Failed"] },
+    "erpOrderId": { "type": "string" },
+    "reason": { "type": "string" }
+  },
+  "additionalProperties": false
+}
