@@ -1,3 +1,4 @@
+using Crm.Api.Infrastructure;
 using System.Text.Json;
 using Crm.Api.Domain;
 using Crm.Api.Integration;
@@ -29,15 +30,16 @@ public sealed class QuoteService(
         if (!OpportunityStages.IsOpen(opp.Stage)) throw new CrmConflictException("The opportunity is closed.");
         var items = Validate(r.Lines);
         var now = DateTime.UtcNow;
-        await using var tx = await Db.Database.BeginTransactionAsync(ct);
-        var q = await quotes.AddAsync(new Quote
+        return await Db.InTransactionAsync(async () =>
         {
-            TenantId = opp.TenantId, OpportunityId = opp.Id, CustomerId = opp.CustomerId, Status = QuoteStatuses.Draft,
-            Total = Total(items), CreatedAt = now, CreatedBy = tenant.UserId, UpdatedAt = now, UpdatedBy = tenant.UserId
+            var q = await quotes.AddAsync(new Quote
+            {
+                TenantId = opp.TenantId, OpportunityId = opp.Id, CustomerId = opp.CustomerId, Status = QuoteStatuses.Draft,
+                Total = Total(items), CreatedAt = now, CreatedBy = tenant.UserId, UpdatedAt = now, UpdatedBy = tenant.UserId
+            }, ct);
+            IReadOnlyList<QuoteLine> saved = await AddLinesAsync(q, items, ct);
+            return new QuoteView(q, saved);
         }, ct);
-        IReadOnlyList<QuoteLine> saved = await AddLinesAsync(q, items, ct);
-        await tx.CommitAsync(ct);
-        return new QuoteView(q, saved);
     }
 
     public async Task<QuoteView> GetAsync(int id, CancellationToken ct)
@@ -53,16 +55,17 @@ public sealed class QuoteService(
         var q = await GetQuoteAsync(id, ct);
         if (q.Status != QuoteStatuses.Draft) throw new CrmConflictException("Only a draft quote can be edited.");
         var items = Validate(r.Lines);
-        await using var tx = await Db.Database.BeginTransactionAsync(ct);
-        var (t, user, now, total) = (q.TenantId, tenant.UserId, DateTime.UtcNow, Total(items));
-        var changed = await Db.Set<Quote>()
-            .Where(x => x.Id == id && x.TenantId == t && x.Status == QuoteStatuses.Draft)
-            .ExecuteUpdateAsync(u => u.SetProperty(x => x.Total, total).SetProperty(x => x.UpdatedAt, now)
-                .SetProperty(x => x.UpdatedBy, user), ct);
-        if (changed != 1) throw new CrmConflictException("The quote is no longer a draft.");
-        await Db.Set<QuoteLine>().Where(l => l.QuoteId == id && l.TenantId == t).ExecuteDeleteAsync(ct);
-        await AddLinesAsync(q, items, ct);
-        await tx.CommitAsync(ct);
+        await Db.InTransactionAsync(async () =>
+        {
+            var (t, user, now, total) = (q.TenantId, tenant.UserId, DateTime.UtcNow, Total(items));
+            var changed = await Db.Set<Quote>()
+                .Where(x => x.Id == id && x.TenantId == t && x.Status == QuoteStatuses.Draft)
+                .ExecuteUpdateAsync(u => u.SetProperty(x => x.Total, total).SetProperty(x => x.UpdatedAt, now)
+                    .SetProperty(x => x.UpdatedBy, user), ct);
+            if (changed != 1) throw new CrmConflictException("The quote is no longer a draft.");
+            await Db.Set<QuoteLine>().Where(l => l.QuoteId == id && l.TenantId == t).ExecuteDeleteAsync(ct);
+            await AddLinesAsync(q, items, ct);
+        }, ct);
         return await GetAsync(id, ct);
     }
 
@@ -110,28 +113,29 @@ public sealed class QuoteService(
         if (mapping is not { Status: MappingStatuses.Active } || string.IsNullOrEmpty(mapping.ErpCustomerId))
             throw new CrmConflictException("The customer is not yet synchronised to the ERP.");
 
-        await using var tx = await Db.Database.BeginTransactionAsync(ct);
-        var (t, user, now) = (q.TenantId, tenant.UserId, DateTime.UtcNow);
-        var changed = await Db.Set<Quote>()
-            .Where(x => x.Id == id && x.TenantId == t && x.Status == QuoteStatuses.Approved)
-            .ExecuteUpdateAsync(u => u.SetProperty(x => x.Status, QuoteStatuses.Accepted)
-                .SetProperty(x => x.UpdatedAt, now).SetProperty(x => x.UpdatedBy, user), ct);
-        if (changed != 1) throw new CrmConflictException("Only an approved quote can be accepted.");
-        var (oppId, total) = (q.OpportunityId, q.Total);
-        await Db.Set<Opportunity>()
-            .Where(o => o.Id == oppId && o.TenantId == t && o.Stage != OpportunityStages.ClosedWon &&
-                        o.Stage != OpportunityStages.ClosedLost)
-            .ExecuteUpdateAsync(u => u.SetProperty(o => o.Stage, OpportunityStages.ClosedWon)
-                .SetProperty(o => o.Amount, total).SetProperty(o => o.UpdatedAt, now)
-                .SetProperty(o => o.UpdatedBy, user), ct);
+        await Db.InTransactionAsync(async () =>
+        {
+            var (t, user, now) = (q.TenantId, tenant.UserId, DateTime.UtcNow);
+            var changed = await Db.Set<Quote>()
+                .Where(x => x.Id == id && x.TenantId == t && x.Status == QuoteStatuses.Approved)
+                .ExecuteUpdateAsync(u => u.SetProperty(x => x.Status, QuoteStatuses.Accepted)
+                    .SetProperty(x => x.UpdatedAt, now).SetProperty(x => x.UpdatedBy, user), ct);
+            if (changed != 1) throw new CrmConflictException("Only an approved quote can be accepted.");
+            var (oppId, total) = (q.OpportunityId, q.Total);
+            await Db.Set<Opportunity>()
+                .Where(o => o.Id == oppId && o.TenantId == t && o.Stage != OpportunityStages.ClosedWon &&
+                            o.Stage != OpportunityStages.ClosedLost)
+                .ExecuteUpdateAsync(u => u.SetProperty(o => o.Stage, OpportunityStages.ClosedWon)
+                    .SetProperty(o => o.Amount, total).SetProperty(o => o.UpdatedAt, now)
+                    .SetProperty(o => o.UpdatedBy, user), ct);
 
-        var messageId = Guid.NewGuid();
-        var dto = new QuoteAcceptedDto(1, q.TenantId, q.Id, q.OpportunityId, q.CustomerId, mapping.ErpCustomerId!,
-            messageId.ToString(), q.Total,
-            view.Lines.Select(l => new QuoteLineDto(l.Sku, l.Description, l.Quantity, l.UnitPrice)).ToArray());
-        await Outbox.EnqueueAsync(Db, messageId, t, QuoteIntegrationNames.QuoteAccepted, q.Id, 1,
-            JsonSerializer.Serialize(dto), ct, user);
-        await tx.CommitAsync(ct);
+            var messageId = Guid.NewGuid();
+            var dto = new QuoteAcceptedDto(1, q.TenantId, q.Id, q.OpportunityId, q.CustomerId, mapping.ErpCustomerId!,
+                messageId.ToString(), q.Total,
+                view.Lines.Select(l => new QuoteLineDto(l.Sku, l.Description, l.Quantity, l.UnitPrice)).ToArray());
+            await Outbox.EnqueueAsync(Db, messageId, t, QuoteIntegrationNames.QuoteAccepted, q.Id, 1,
+                JsonSerializer.Serialize(dto), ct, user);
+        }, ct);
         return await GetAsync(id, ct);
     }
 

@@ -30,9 +30,10 @@ class TemporalWorkerConfig {
     @Bean(initMethod = "start", destroyMethod = "shutdown")
     WorkerFactory temporalWorkerFactory(WorkflowClient client, ErpCustomerActivitiesImpl customerActivities,
                                         ErpOrderActivitiesImpl orderActivities, ErpReturnActivitiesImpl returnActivities,
+                                        FulfilmentBotActivitiesImpl botActivities,
                                         @Value("${temporal.erp-task-queue}") String queue) {
         var factory = WorkerFactory.newInstance(client);
-        factory.newWorker(queue).registerActivitiesImplementations(customerActivities, orderActivities, returnActivities);
+        factory.newWorker(queue).registerActivitiesImplementations(customerActivities, orderActivities, returnActivities, botActivities);
         return factory;
     }
 }

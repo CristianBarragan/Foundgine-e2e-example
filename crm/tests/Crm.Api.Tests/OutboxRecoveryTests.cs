@@ -1,4 +1,5 @@
 using Crm.Api.Domain;
+using Crm.Api.Infrastructure;
 using Crm.Api.Integration;
 using Foundgine.Providers.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
@@ -66,9 +67,8 @@ public sealed class OutboxRecoveryTests : IClassFixture<CrmFactory>, IAsyncLifet
     {
         var id = Guid.NewGuid();
         await using var db = await _contexts!.CreateDbContextAsync();
-        await using var tx = await db.Database.BeginTransactionAsync();
-        await Outbox.EnqueueAsync(db, id, "acme", "Test.Event", 1, 1, "{}", default);
-        await tx.CommitAsync();
+        // The CRM uses SQL Server's retrying execution strategy, which only allows transactions run through it.
+        await db.InTransactionAsync(() => Outbox.EnqueueAsync(db, id, "acme", "Test.Event", 1, 1, "{}", default), default);
         return id;
     }
 
