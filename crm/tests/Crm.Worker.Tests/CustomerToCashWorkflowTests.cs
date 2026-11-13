@@ -1,6 +1,7 @@
 using Crm.Api.Integration;
 using Crm.Worker.Workflows;
 using Temporalio.Activities;
+using Temporalio.Api.Enums.V1;
 using Temporalio.Client;
 using Temporalio.Exceptions;
 using Temporalio.Testing;
@@ -100,8 +101,8 @@ public sealed class CustomerToCashWorkflowTests
         await RunAsync(crm, async env =>
         {
             var handle = await StartAsync(env, Start());
-            await handle.SignalAsync(wf => wf.RecordShipmentAsync(Shipment("Packed", 1)));
-            await handle.SignalAsync(wf => wf.RecordShipmentAsync(Shipment("Delivered", 2)));
+            await handle.SignalAsync(wf => wf.RecordShipmentAsync(Shipment("Packed", 1, "acme")));
+            await handle.SignalAsync(wf => wf.RecordShipmentAsync(Shipment("Delivered", 2, "acme")));
             await handle.SignalAsync(wf => wf.RecordInvoiceAsync(Invoice("Issued", 1)));
             await handle.SignalAsync(wf => wf.RecordInvoiceAsync(Invoice("Paid", 2)));
             await handle.SignalAsync(wf => wf.RecordPaymentAsync(Payment("Reconciled", 1)));
@@ -120,9 +121,9 @@ public sealed class CustomerToCashWorkflowTests
         await RunAsync(new FakeCrmActivities(), async env =>
         {
             var handle = await StartAsync(env, Start());
-            await handle.SignalAsync(wf => wf.RecordShipmentAsync(Shipment("Delivered", 2)));
-            await handle.SignalAsync(wf => wf.RecordShipmentAsync(Shipment("Packed", 1)));     // stale: must not regress to Packed
-            await handle.SignalAsync(wf => wf.RecordShipmentAsync(Shipment("Delivered", 2)));  // duplicate
+            await handle.SignalAsync(wf => wf.RecordShipmentAsync(Shipment("Delivered", 2, "acme")));
+            await handle.SignalAsync(wf => wf.RecordShipmentAsync(Shipment("Packed", 1, "acme")));     // stale: must not regress to Packed
+            await handle.SignalAsync(wf => wf.RecordShipmentAsync(Shipment("Delivered", 2, "acme")));  // duplicate
             await handle.SignalAsync(wf => wf.RecordInvoiceAsync(Invoice("Paid", 2)));
             await handle.SignalAsync(wf => wf.RecordInvoiceAsync(Invoice("Issued", 1)));       // stale
             await handle.SignalAsync(wf => wf.RecordPaymentAsync(Payment("Reconciled", 2)));
@@ -137,7 +138,7 @@ public sealed class CustomerToCashWorkflowTests
         await RunAsync(new FakeCrmActivities(), async env =>
         {
             var handle = await StartAsync(env, Start());
-            await handle.SignalAsync(wf => wf.RecordShipmentAsync(Shipment("Delivered", 1)));
+            await handle.SignalAsync(wf => wf.RecordShipmentAsync(Shipment("Delivered", 1, "acme")));
             await handle.SignalAsync(wf => wf.RecordInvoiceAsync(Invoice("Paid", 1)));
             await handle.SignalAsync(wf => wf.RecordPaymentAsync(Payment("Received", 1))); // not yet reconciled
             await WaitForStatusAsync(handle, "AwaitingFulfilment"); // child done, signals drained
@@ -213,7 +214,7 @@ public sealed class CustomerToCashWorkflowTests
         await RunAsync(new FakeCrmActivities(), async env =>
         {
             var handle = await StartAsync(env, Start());
-            await handle.SignalAsync(wf => wf.RecordShipmentAsync(Shipment("Packed", 1, tenant: "other")));
+            await handle.SignalAsync(wf => wf.RecordShipmentAsync(Shipment("Packed", 1, "other")));
             var ex = await Assert.ThrowsAsync<WorkflowFailedException>(() => ResultAsync(handle));
             var failure = Assert.IsType<ApplicationFailureException>(ex.InnerException);
             Assert.Equal("InvalidFulfilmentEvent", failure.ErrorType);
