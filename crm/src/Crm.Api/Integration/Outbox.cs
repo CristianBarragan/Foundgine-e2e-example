@@ -1,3 +1,4 @@
+using Crm.Api.Infrastructure;
 using System.Text.Json;
 using Crm.Api.Domain;
 using Foundgine.Providers.EntityFrameworkCore;
@@ -57,7 +58,10 @@ public sealed class OutboxPublisher(IDbContextFactory<FoundgineDbContext> factor
     public async Task<int> PublishBatchAsync(int batchSize, CancellationToken ct)
     {
         await using var db = await factory.CreateDbContextAsync(ct);
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        // One retriable unit (see DbTransactions). A retry after a transient SQL failure may dispatch a row again: delivery
+        // is at-least-once and workflow ids make it effectively once.
+        return await db.InTransactionAsync(async () =>
+        {
         // Claim a batch: UPDLOCK + READPAST keeps concurrent publishers off each other's rows (the SQL Server form of
         // FOR UPDATE SKIP LOCKED). EF has no locking hint, so the claim is the one raw statement left; it still
         // materialises the EF entity.
@@ -96,8 +100,8 @@ public sealed class OutboxPublisher(IDbContextFactory<FoundgineDbContext> factor
             }
         }
 
-        await tx.CommitAsync(ct);
         return published;
+        }, ct);
     }
 }
 

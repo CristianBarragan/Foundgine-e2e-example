@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "tenantId": "acme",
+  "correlationId": "7f0c2d9e-3b1a-4c55-9a52-1d2f6c0a9b11",
+  "negotiationId": "neg-1001",
+  "crmCustomerId": 42,
+  "maxTurns": 6,
+  "brief": {
+    "note": "Repeat customer, wants delivery this month.",
+    "lines": [ { "sku": "SKU-1", "quantity": 120, "minQuantity": 80, "maxUnitPrice": 95.00 } ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "tenantId": "acme",
+  "correlationId": "7f0c2d9e-3b1a-4c55-9a52-1d2f6c0a9b11",
+  "negotiationId": "neg-1001",
+  "turn": 3,
+  "crmCustomerId": 42,
+  "brief": {
+    "lines": [ { "sku": "SKU-1", "quantity": 120, "minQuantity": 80, "maxUnitPrice": 95.00 } ]
+  },
+  "history": [
+    { "schemaVersion": 1, "from": "sales", "turn": 1, "intent": "Propose",
+      "lines": [ { "sku": "SKU-1", "quantity": 120, "unitPrice": 85.00 } ], "message": "Proposing 120 x SKU-1 at 85.00." },
+    { "schemaVersion": 1, "from": "fulfilment", "turn": 2, "intent": "Counter",
+      "lines": [ { "sku": "SKU-1", "quantity": 100, "unitPrice": 90.00 } ], "message": "Only 100 available; 90.00 is the floor." }
+  ]
+}

@@ -75,3 +75,6 @@ Partial snapshot: [Checkpoint 15](CHECKPOINT-15.md) (defect fixes + contract fix
 The overlay `infrastructure/docker-compose.demo.yml` adds the CRM API, CRM worker, ERP and orchestration worker, pins Keycloak to
 `http://keycloak:8080` (token issuer must be identical for every service), seeds demo stock for tenant `acme`, and runs `e2e/run.sh`
 with real Keycloak tokens. `e2e/selftest/run-selftest.sh` checks the runner itself against a mock stack (no Docker needed).
+
+## MCP servers (checkpoint 18)
+CRM (`Mcp__Enabled=true`) and ERP (`ERP_MCP_ENABLED=true`) expose read-only MCP servers at `/mcp`. See [docs/mcp.md](docs/mcp.md).

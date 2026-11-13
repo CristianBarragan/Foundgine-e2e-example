@@ -25,7 +25,8 @@ public final class OrchestrationWorker {
                 QuoteToOrderWorkflowImpl.class,
                 ReturnProcessingWorkflowImpl.class,
                 ReturnResolutionWorkflowImpl.class,
-                ErpCrmProjectionWorkflowImpl.class);
+                ErpCrmProjectionWorkflowImpl.class,
+                BotNegotiationWorkflowImpl.class);
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             factory.shutdown();

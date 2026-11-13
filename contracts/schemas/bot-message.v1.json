@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://enterprise.example/schemas/bot-message.v1.json",
+  "title": "One turn of the sales <-> fulfilment bot negotiation",
+  "type": "object",
+  "required": ["schemaVersion", "from", "turn", "intent", "lines", "message"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "from": { "enum": ["sales", "fulfilment"] },
+    "turn": { "type": "integer", "minimum": 1, "description": "1-based position in the conversation; sales takes the odd turns, fulfilment the even ones." },
+    "intent": { "enum": ["Propose", "Counter", "Accept", "Decline"],
+                "description": "Propose is only valid as turn 1. Accept repeats the lines being accepted; Decline carries no lines." },
+    "lines": {
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["sku", "quantity", "unitPrice"], "additionalProperties": false,
+        "properties": {
+          "sku": { "type": "string", "minLength": 1 },
+          "quantity": { "type": "integer", "minimum": 1 },
+          "unitPrice": { "type": "number", "minimum": 0 }
+        }
+      }
+    },
+    "message": { "type": "string", "maxLength": 1000, "description": "Free text from the bot (LLM or rules). Informational only; never parsed for decisions." }
+  }
+}

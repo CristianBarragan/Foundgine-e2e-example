@@ -1,3 +1,4 @@
+using Crm.Api.Infrastructure;
 using Crm.Api.Application;
 using Crm.Api.Domain;
 using Foundgine.Providers.EntityFrameworkCore;
@@ -67,21 +68,21 @@ public sealed class IntegrationService(IFoundgineRepository<Customer> customers)
             .Select(m => new { m.CrmCustomerId, m.Attempt })
             .ToListAsync(ct);
 
-        await using var tx = await Db.Database.BeginTransactionAsync(ct);
-        foreach (var row in stale)
+        await Db.InTransactionAsync(async () =>
         {
-            var c = await customers.GetAsync(row.CrmCustomerId, ct);
-            if (c is null) continue;
-            var attempt = row.Attempt + 1;
-            var now = DateTime.UtcNow;
-            var id = row.CrmCustomerId;
-            await Db.Set<CustomerIntegrationMapping>().Where(m => m.CrmCustomerId == id)
-                .ExecuteUpdateAsync(u => u.SetProperty(m => m.Attempt, attempt)
-                    .SetProperty(m => m.Status, MappingStatuses.Pending).SetProperty(m => m.UpdatedAt, now), ct);
-            await Outbox.EnqueueOnboardingAsync(Db, c, attempt, ct);
-        }
-
-        await tx.CommitAsync(ct);
+            foreach (var row in stale)
+            {
+                var c = await customers.GetAsync(row.CrmCustomerId, ct);
+                if (c is null) continue;
+                var attempt = row.Attempt + 1;
+                var now = DateTime.UtcNow;
+                var id = row.CrmCustomerId;
+                await Db.Set<CustomerIntegrationMapping>().Where(m => m.CrmCustomerId == id)
+                    .ExecuteUpdateAsync(u => u.SetProperty(m => m.Attempt, attempt)
+                        .SetProperty(m => m.Status, MappingStatuses.Pending).SetProperty(m => m.UpdatedAt, now), ct);
+                await Outbox.EnqueueOnboardingAsync(Db, c, attempt, ct);
+            }
+        }, ct);
         return stale.Count;
     }
 
