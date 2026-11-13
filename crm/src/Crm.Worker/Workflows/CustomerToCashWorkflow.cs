@@ -1,4 +1,5 @@
 using Crm.Api.Integration;
+using Temporalio.Common;
 using Temporalio.Exceptions;
 using Temporalio.Workflows;
 
@@ -188,10 +189,38 @@ public sealed class CustomerToCashWorkflow
                 errorType: "InvalidCustomerToCashContract", nonRetryable: true);
     }
 
-    private static Task ReportFailureToCrmAsync(CustomerToCashStart input, string reason) =>
-        Workflow.ExecuteActivityAsync(CustomerToCashNames.CrmMarkOrderFailedActivity,
-            [default], default);
-            // [new MarkOrderFailedInput(input.TenantId, input.QuoteId, reason)], CrmActivityOptions());
+    /// <summary>
+    /// Best effort. The CRM activity is idempotent (already OrderFailed is a no-op), so a transient CRM outage is waited
+    /// out by the unlimited retry policy; only a permanent refusal (quote gone, or already Ordered) reaches the catch and
+    /// must not hide the real business outcome behind a failed parent workflow.
+    /// </summary>
+    private static async Task ReportFailureToCrmAsync(CustomerToCashStart input, string reason)
+    {
+        try
+        {
+            await Workflow.ExecuteActivityAsync(CustomerToCashNames.CrmMarkOrderFailedActivity,
+                [new MarkOrderFailedInput(input.TenantId, input.QuoteId, reason)], CrmActivityOptions());
+        }
+        catch (ActivityFailureException)
+        {
+            // CrmNotFoundException / CrmConflictException / CrmValidationException: nothing more to report.
+        }
+    }
+
+    /// <summary>CRM-owned activities run on the "crm" queue hosted by Crm.Api. CRM being down is waited out.</summary>
+    internal static ActivityOptions CrmActivityOptions() => new()
+    {
+        TaskQueue = CustomerToCashNames.CrmTaskQueue,
+        StartToCloseTimeout = TimeSpan.FromSeconds(30),
+        RetryPolicy = new RetryPolicy
+        {
+            InitialInterval = TimeSpan.FromSeconds(1),
+            BackoffCoefficient = 2,
+            MaximumInterval = TimeSpan.FromMinutes(1),
+            MaximumAttempts = 0, // unlimited
+            NonRetryableErrorTypes = ["CrmNotFoundException", "CrmValidationException", "CrmConflictException"]
+        }
+    };
 }
 
 public sealed record CustomerToCashResult(

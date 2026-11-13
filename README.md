@@ -1,7 +1,14 @@
 # Enterprise platform
 
-CRM (.NET 10 + Foundgine) and ERP (Java + Spring Boot + Foundgine) integrated through Temporal, with Keycloak identity.
+CRM (.NET 10 + Foundgine + EF Core on SQL Server) and ERP (Java + Spring Boot + JPA on PostgreSQL) integrated through Temporal, with Keycloak identity.
 See `docs/implementation-plan.txt` and `docs/decisions.md`.
+
+## Quick start
+    ./start.sh                              # SQL Server (CRM), PostgreSQL (ERP), Temporal, Keycloak
+    dotnet run --project crm/src/Crm.Api    # creates and migrates the crm database itself
+    mvn -f erp/pom.xml spring-boot:run      # Flyway creates the erp schema; JPA validates it
+Databases: CRM = EF Core on SQL Server (localhost,1433, sa / `Crm_dev_pw1!`), ERP = JPA on PostgreSQL (localhost:5434, erp / `erp_dev_pw`).
+If you have an old `.env`, set `CRM_DB_PASSWORD=Crm_dev_pw1!` (SQL Server rejects weak passwords).
 
 ## Run
     ./start.sh                              # infrastructure (needs Docker)
@@ -14,7 +21,7 @@ See `docs/implementation-plan.txt` and `docs/decisions.md`.
 
 ## CRM (Phase 3)
     ./start.sh
-    export CRM_TEST_CONNECTION="Host=localhost;Port=5433;Database=crm;Username=crm;Password=crm_dev_pw"
+    export CRM_TEST_CONNECTION="Server=localhost,1433;Database=crm_test;User Id=sa;Password=Crm_dev_pw1!;TrustServerCertificate=True"
     dotnet test crm/Crm.slnx          # DB-backed tests skip when CRM_TEST_CONNECTION is unset
     ASPNETCORE_ENVIRONMENT=Development dotnet run --project crm/src/Crm.Api
 Dev auth headers: `X-Tenant-Id`, `X-User-Id`, `X-Roles` (e.g. `crm-sales`). See `docs/decisions.md`.
@@ -59,3 +66,12 @@ Latest implementation increment: [Checkpoint 13](CHECKPOINT-13.md) adds executab
 
 
 Latest implementation increment: [Checkpoint 14](CHECKPOINT-14.md) hardens single-writer CRM projections and ERP command idempotency/retry behavior.
+
+Partial snapshot: [Checkpoint 15](CHECKPOINT-15.md) (defect fixes + contract fixtures; demo not finished).
+
+## Executable demo (checkpoint 15)
+    scripts/demo.sh            # builds and starts everything in containers, drives the whole journey, checks Temporal, tears down
+    scripts/demo.sh --keep     # same, but leave the stack running
+The overlay `infrastructure/docker-compose.demo.yml` adds the CRM API, CRM worker, ERP and orchestration worker, pins Keycloak to
+`http://keycloak:8080` (token issuer must be identical for every service), seeds demo stock for tenant `acme`, and runs `e2e/run.sh`
+with real Keycloak tokens. `e2e/selftest/run-selftest.sh` checks the runner itself against a mock stack (no Docker needed).

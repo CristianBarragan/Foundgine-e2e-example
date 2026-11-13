@@ -7,10 +7,13 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Crm.Api.Domain;
 
-/// <summary>Foundgine capability for the CRM: model, EF provider on PostgreSQL and the application services.</summary>
+/// <summary>Foundgine capability for the CRM: model, EF provider on SQL Server and the application services.</summary>
 public sealed class CrmDomain : IFoundgineCapability
 {
     public const string ConnectionStringName = "CrmConnectionString";
+    /// <summary>The compose `crm-db` SQL Server (./start.sh). The database is created by the first migration run.</summary>
+    public const string DevConnectionString =
+        "Server=localhost,1433;Database=crm;User Id=sa;Password=Crm_dev_pw1!;TrustServerCertificate=True";
 
     public static void Configure(FoundgineCapabilityContext context)
     {
@@ -20,7 +23,7 @@ public sealed class CrmDomain : IFoundgineCapability
 
         context.Services.AddFoundgineEf(
             CrmSemantics.Metadata,
-            (sp, o) => o.UseCrmNpgsql(
+            (sp, o) => o.UseCrmSqlServer(
                 sp.GetRequiredService<IConfiguration>()[ConnectionStringName]
                 ?? Environment.GetEnvironmentVariable(ConnectionStringName)
                 ?? throw new InvalidOperationException($"{ConnectionStringName} is required.")),

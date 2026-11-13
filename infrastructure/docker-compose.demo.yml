@@ -1,0 +1,117 @@
+# Executable demo overlay: runs the whole platform in containers and drives it end to end.
+#   docker compose --env-file .env -f infrastructure/docker-compose.yml -f infrastructure/docker-compose.demo.yml up -d --build --wait
+#   docker compose --env-file .env -f infrastructure/docker-compose.yml -f infrastructure/docker-compose.demo.yml --profile e2e run --rm e2e
+# (scripts/demo.sh does both.)
+#
+# Keycloak hostname: a JWT's issuer is the URL the token was requested from, and every service validates it against its
+# configured authority. Keycloak is therefore pinned to ONE public URL, http://keycloak:8080, which resolves inside the
+# compose network for the services and the e2e runner. To use it from the host browser/curl add "127.0.0.1 keycloak"
+# to /etc/hosts and keep using http://keycloak:8080.
+x-tcp-health: &tcp-health
+  interval: 5s
+  timeout: 3s
+  retries: 40
+  start_period: 10s
+
+services:
+  keycloak:
+    environment:
+      KC_HOSTNAME: "http://keycloak:8080"
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+    healthcheck:
+      # The image has no curl: speak HTTP over bash's /dev/tcp. Ready when the imported realm answers 200.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /realms/enterprise HTTP/1.1\\r\\nHost: keycloak\\r\\nConnection: close\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+      <<: *tcp-health
+      start_period: 40s
+
+  temporal:
+    healthcheck:
+      # Healthy only when the "enterprise" namespace exists, so dependants never race namespace creation.
+      test: ["CMD-SHELL", "tctl --address temporal:7233 cluster health | grep -q SERVING && tctl --address temporal:7233 --namespace enterprise namespace describe >/dev/null"]
+      <<: *tcp-health
+      start_period: 30s
+
+  crm-api:
+    build: { context: .., dockerfile: infrastructure/docker/crm-api.Dockerfile }
+    depends_on:
+      crm-db: { condition: service_healthy }
+      temporal: { condition: service_healthy }
+      keycloak: { condition: service_healthy }
+    environment:
+      # Development is required for the ephemeral warrant key; dev-header auth is switched off explicitly.
+      ASPNETCORE_ENVIRONMENT: Development
+      Auth__DevHeaders: "false"
+      CrmConnectionString: "Server=crm-db,1433;Database=crm;User Id=sa;Password=${CRM_DB_PASSWORD:-Crm_dev_pw1!};TrustServerCertificate=True"
+      Database__MigrateOnStart: "true"
+      Foundgine__Keycloak__Authority: "http://keycloak:8080/realms/enterprise"
+      Foundgine__Keycloak__RequireHttpsMetadata: "false"
+      Temporal__Enabled: "true"
+      Temporal__Address: "temporal:7233"
+      Foundgine__Temporal__Address: "temporal:7233"
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5000 && printf 'GET /api/v1/health HTTP/1.1\\r\\nHost: crm\\r\\nConnection: close\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+      <<: *tcp-health
+    ports: ["5000:5000"]
+
+  crm-worker:
+    build: { context: .., dockerfile: infrastructure/docker/crm-worker.Dockerfile }
+    depends_on:
+      temporal: { condition: service_healthy }
+      keycloak: { condition: service_healthy }
+    environment:
+      DOTNET_ENVIRONMENT: Development
+      Foundgine__Temporal__Address: "temporal:7233"
+      Foundgine__Keycloak__Authority: "http://keycloak:8080/realms/enterprise"
+      Foundgine__Keycloak__ServiceClientSecret: "crm-worker-dev-secret"
+
+  erp:
+    build: { context: .., dockerfile: infrastructure/docker/erp.Dockerfile }
+    depends_on:
+      erp-db: { condition: service_healthy }
+      temporal: { condition: service_healthy }
+      keycloak: { condition: service_healthy }
+    environment:
+      ERP_DB_URL: "jdbc:postgresql://erp-db:5432/erp"
+      ERP_DB_PASSWORD: "${ERP_DB_PASSWORD:-erp_dev_pw}"
+      KEYCLOAK_ISSUER: "http://keycloak:8080/realms/enterprise"
+      TEMPORAL_ENABLED: "true"
+      TEMPORAL_ADDRESS: "temporal:7233"
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8082 && printf 'GET /actuator/health HTTP/1.1\\r\\nHost: erp\\r\\nConnection: close\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+      <<: *tcp-health
+      start_period: 30s
+    ports: ["8082:8082"]
+
+  orchestration:
+    build: { context: .., dockerfile: infrastructure/docker/orchestration.Dockerfile }
+    depends_on:
+      temporal: { condition: service_healthy }
+    environment:
+      TEMPORAL_ADDRESS: "temporal:7233"
+
+  # One-shot: demo stock for tenant "acme", applied after the ERP has run its Flyway migrations (erp is healthy).
+  erp-seed:
+    image: postgres:17
+    depends_on:
+      erp: { condition: service_healthy }
+    restart: "no"
+    environment:
+      PGPASSWORD: "${ERP_DB_PASSWORD:-erp_dev_pw}"
+    volumes: ["./demo/seed-erp.sql:/seed.sql:ro"]
+    command: ["psql", "-h", "erp-db", "-U", "erp", "-d", "erp", "-v", "ON_ERROR_STOP=1", "-f", "/seed.sql"]
+
+  e2e:
+    profiles: ["e2e"]
+    build: { context: .., dockerfile: infrastructure/docker/e2e.Dockerfile }
+    depends_on:
+      crm-api: { condition: service_healthy }
+      erp: { condition: service_healthy }
+      crm-worker: { condition: service_started }
+      orchestration: { condition: service_started }
+      erp-seed: { condition: service_completed_successfully }
+    environment:
+      KEYCLOAK_URL: "http://keycloak:8080"
+      CRM_URL: "http://crm-api:5000"
+      ERP_URL: "http://erp:8082"
+    volumes: ["../e2e:/e2e:ro"]

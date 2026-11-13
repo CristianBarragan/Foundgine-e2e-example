@@ -32,13 +32,12 @@ class ErpReturnServiceTest {
 
     @BeforeAll
     static void setUp() {
-        var ds = new DriverManagerDataSource(System.getenv("ERP_TEST_JDBC"));
-        Flyway.configure().dataSource(ds).load().migrate();
-        jdbc = JdbcClient.create(ds);
-        service = new ErpReturnService(jdbc);
-        orders = new ErpOrderService(jdbc);
-        customers = new ErpCustomerService(jdbc);
-        tx = new TransactionTemplate(new DataSourceTransactionManager(ds));
+        var support = com.enterprise.erp.ErpTestSupport.create();
+        jdbc = support.jdbc();
+        service = support.returnService();
+        orders = support.orderService();
+        customers = support.customerService();
+        tx = support.tx();
     }
 
     record Fixture(String tenant, String customer, String order) {}

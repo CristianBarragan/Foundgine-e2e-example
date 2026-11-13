@@ -58,12 +58,13 @@ public sealed class OutboxPublisher(IDbContextFactory<FoundgineDbContext> factor
     {
         await using var db = await factory.CreateDbContextAsync(ct);
         await using var tx = await db.Database.BeginTransactionAsync(ct);
-        // Claim a batch: FOR UPDATE SKIP LOCKED keeps concurrent publishers off each other's rows. EF has no
-        // locking hint, so the claim is the one raw statement left; it still materialises the EF entity.
+        // Claim a batch: UPDLOCK + READPAST keeps concurrent publishers off each other's rows (the SQL Server form of
+        // FOR UPDATE SKIP LOCKED). EF has no locking hint, so the claim is the one raw statement left; it still
+        // materialises the EF entity.
         var rows = await db.Set<OutboxMessage>()
-            .FromSql($@"SELECT * FROM outbox_messages
-                        WHERE published_at IS NULL AND next_attempt_at <= now()
-                        ORDER BY created_at LIMIT {batchSize} FOR UPDATE SKIP LOCKED")
+            .FromSql($@"SELECT TOP ({batchSize}) * FROM outbox_messages WITH (UPDLOCK, READPAST, ROWLOCK)
+                        WHERE published_at IS NULL AND next_attempt_at <= SYSUTCDATETIME()
+                        ORDER BY created_at")
             .AsNoTracking().ToListAsync(ct);
 
         var published = 0;

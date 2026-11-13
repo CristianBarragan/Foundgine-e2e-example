@@ -13,5 +13,7 @@
     <Compile Include="../Crm.Api/Integration/FoundgineProcesses.cs" Link="FoundgineProcesses.cs" />
     <Compile Include="../Crm.Api/Integration/CustomerToCashContracts.cs" Link="CustomerToCashContracts.cs" />
     <Compile Include="../Crm.Api/Integration/FulfilmentContracts.cs" Link="FulfilmentContracts.cs" />
+    <!-- MarkOrderFailedInput: the parent workflow reports failures to the CRM with the same payload the Java workflow uses. -->
+    <Compile Include="../Crm.Api/Integration/QuoteContracts.cs" Link="QuoteContracts.cs" />
   </ItemGroup>
 </Project>

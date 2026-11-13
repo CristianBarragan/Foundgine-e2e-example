@@ -212,10 +212,10 @@ public static class CrmStorage
             e.HasKey(x => x.Id).HasName("outbox_messages_pkey");
             e.Property(x => x.Id).HasColumnName("id").ValueGeneratedNever();
             Tenant(e); Col(e, x => x.Type, "type", 100); Col(e, x => x.AggregateId, "aggregate_id");
-            Col(e, x => x.Attempt, "attempt"); Col(e, x => x.Payload, "payload"); e.Property(x => x.Payload).HasColumnType("jsonb");
+            Col(e, x => x.Attempt, "attempt"); Col(e, x => x.Payload, "payload"); e.Property(x => x.Payload).HasColumnType("nvarchar(max)");
             Col(e, x => x.CreatedAt, "created_at"); Col(e, x => x.PublishedAt, "published_at");
             Col(e, x => x.PublishAttempts, "publish_attempts"); Col(e, x => x.NextAttemptAt, "next_attempt_at");
-            e.Property(x => x.NextAttemptAt).HasDefaultValueSql("now()");
+            e.Property(x => x.NextAttemptAt).HasDefaultValueSql("SYSUTCDATETIME()");
             Col(e, x => x.LastError, "last_error"); Col(e, x => x.Initiator, "initiator", 128);
             e.HasIndex(x => x.NextAttemptAt).HasFilter("published_at IS NULL").HasDatabaseName("ix_outbox_unpublished");
         });

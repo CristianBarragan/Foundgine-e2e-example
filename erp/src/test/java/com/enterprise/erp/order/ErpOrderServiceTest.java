@@ -34,12 +34,11 @@ class ErpOrderServiceTest {
 
     @BeforeAll
     static void setUp() {
-        var ds = new DriverManagerDataSource(System.getenv("ERP_TEST_JDBC"));
-        Flyway.configure().dataSource(ds).load().migrate();
-        jdbc = JdbcClient.create(ds);
-        service = new ErpOrderService(jdbc);
-        customers = new ErpCustomerService(jdbc);
-        tx = new TransactionTemplate(new DataSourceTransactionManager(ds));
+        var support = com.enterprise.erp.ErpTestSupport.create();
+        jdbc = support.jdbc();
+        service = support.orderService();
+        customers = support.customerService();
+        tx = support.tx();
     }
 
     /** Seeds a tenant with an active customer and two products (A: 10 in stock, B: 1 in stock); returns the ERP customer id. */
