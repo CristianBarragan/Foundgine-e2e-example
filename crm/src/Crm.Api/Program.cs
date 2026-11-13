@@ -34,6 +34,8 @@ builder.Services.AddScoped<FulfilmentService>();
 builder.Services.AddScoped<AdminAudit>();
 builder.Services.AddScoped<Crm.Api.Application.Querying.CrmReader>();
 builder.Services.AddScoped<InsightsService>();
+// Foundgine MCP server (read tools only) at /mcp, opt-in: Mcp:Enabled. Same bearer auth and crm.read policy as the REST API.
+if (builder.Configuration.McpEnabled()) builder.Services.AddCrmMcp();
 
 // Rate limiting: fixed window per tenant (per client IP when unauthenticated). RateLimit:PermitsPerMinute, default 600.
 var permits = builder.Configuration.GetValue("RateLimit:PermitsPerMinute", 600);
@@ -115,6 +117,7 @@ app.UseAuthentication();
 app.UseRateLimiter(); // after authentication so the tenant claim is available
 app.UseAuthorization();
 app.MapCrmApi();
+if (app.Configuration.McpEnabled()) app.MapCrmMcp();
 if (temporal.Enabled)
 {
     // Start/status/decision/cancel for Foundgine processes. Tenant and subject come from the Keycloak warrant context,

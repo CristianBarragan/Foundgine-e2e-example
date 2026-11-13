@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://enterprise.example/schemas/bot-negotiation-start.v1.json",
+  "title": "Input of BotNegotiationWorkflow (id BotNegotiation:{tenantId}:{negotiationId})",
+  "type": "object",
+  "required": ["schemaVersion", "tenantId", "correlationId", "negotiationId", "crmCustomerId", "maxTurns", "brief"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "tenantId": { "type": "string" },
+    "correlationId": { "type": "string" },
+    "negotiationId": { "type": "string", "minLength": 1, "description": "Idempotency key together with tenantId." },
+    "crmCustomerId": { "type": "integer" },
+    "maxTurns": { "type": "integer", "minimum": 2, "maximum": 10 },
+    "brief": {
+      "type": "object", "required": ["lines"], "additionalProperties": false,
+      "description": "What the customer wants. Given to the sales bot ONLY; the fulfilment bot never sees limits.",
+      "properties": {
+        "note": { "type": "string", "maxLength": 500 },
+        "lines": {
+          "type": "array", "minItems": 1, "maxItems": 20,
+          "items": {
+            "type": "object", "required": ["sku", "quantity", "minQuantity", "maxUnitPrice"], "additionalProperties": false,
+            "properties": {
+              "sku": { "type": "string", "minLength": 1 },
+              "quantity": { "type": "integer", "minimum": 1, "description": "Wanted quantity." },
+              "minQuantity": { "type": "integer", "minimum": 1, "description": "Smallest quantity the customer will take." },
+              "maxUnitPrice": { "type": "number", "minimum": 0, "description": "Highest unit price the customer will pay." }
+            }
+          }
+        }
+      }
+    }
+  }
+}

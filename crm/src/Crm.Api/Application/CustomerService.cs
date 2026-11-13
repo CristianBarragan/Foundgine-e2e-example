@@ -32,19 +32,20 @@ public sealed partial class CustomerService(
         };
         try
         {
-            await using var tx = await repo.Context.Database.BeginTransactionAsync(ct);
-            var saved = await repo.AddAsync(customer, ct);
-            var mapping = new CustomerIntegrationMapping
+            return await repo.Context.InTransactionAsync(async () =>
             {
-                CrmCustomerId = saved.Id, TenantId = saved.TenantId, Status = MappingStatuses.Pending, Attempt = 1,
-                CreatedAt = now, UpdatedAt = now
-            };
-            repo.Context.Set<CustomerIntegrationMapping>().Add(mapping);
-            await repo.Context.SaveChangesAsync(ct);
-            repo.Context.Entry(mapping).State = EntityState.Detached;
-            await Integration.Outbox.EnqueueOnboardingAsync(repo.Context, saved, 1, ct, tenant.UserId);
-            await tx.CommitAsync(ct);
-            return saved;
+                var saved = await repo.AddAsync(customer, ct);
+                var mapping = new CustomerIntegrationMapping
+                {
+                    CrmCustomerId = saved.Id, TenantId = saved.TenantId, Status = MappingStatuses.Pending, Attempt = 1,
+                    CreatedAt = now, UpdatedAt = now
+                };
+                repo.Context.Set<CustomerIntegrationMapping>().Add(mapping);
+                await repo.Context.SaveChangesAsync(ct);
+                repo.Context.Entry(mapping).State = EntityState.Detached;
+                await Integration.Outbox.EnqueueOnboardingAsync(repo.Context, saved, 1, ct, tenant.UserId);
+                return saved;
+            }, ct);
         }
         catch (DbUpdateException ex) when (DbErrors.IsUniqueViolation(ex))
         {

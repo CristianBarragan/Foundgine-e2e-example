@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://enterprise.example/schemas/bot-negotiation-result.v1.json",
+  "title": "Result of BotNegotiationWorkflow. Advisory: nothing is written to CRM or ERP.",
+  "type": "object",
+  "required": ["schemaVersion", "negotiationId", "status", "turns", "lines", "total", "reason", "transcript"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "negotiationId": { "type": "string" },
+    "status": { "enum": ["Agreed", "Declined", "Exhausted"] },
+    "turns": { "type": "integer", "minimum": 1 },
+    "lines": { "$ref": "bot-message.v1.json#/properties/lines", "description": "Agreed lines; empty unless Agreed." },
+    "total": { "type": "number", "minimum": 0 },
+    "reason": { "type": "string" },
+    "transcript": { "type": "array", "items": { "$ref": "bot-message.v1.json" } }
+  }
+}

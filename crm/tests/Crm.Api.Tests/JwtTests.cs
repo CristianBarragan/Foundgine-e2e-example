@@ -15,7 +15,7 @@ using Xunit;
 /// JWT validation without Keycloak: the bearer handler is pointed at a local signing key (no discovery), keeping the
 /// production validation rules (issuer, audience, lifetime, signature, "roles"/"tenant_id" claims).
 /// </summary>
-public sealed class JwtFactory : WebApplicationFactory<Program>
+public class JwtFactory : WebApplicationFactory<Program>
 {
     public const string Issuer = "http://keycloak.test/realms/enterprise";
     public const string Audience = "crm-api";

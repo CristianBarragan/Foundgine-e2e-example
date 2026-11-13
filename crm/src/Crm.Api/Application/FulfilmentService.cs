@@ -163,7 +163,8 @@ public sealed class FulfilmentService(IFoundgineRepository<Quote> quotes, IFound
             throw new CrmConflictException("The customer is not yet synchronised to the ERP.");
 
         var t = q.TenantId;
-        await using var tx = await Db.Database.BeginTransactionAsync(ct);
+        var returnId = await Db.InTransactionAsync(async () =>
+        {
         // Serialise concurrent return requests for the same quote so the quantity cap below cannot be raced.
         // EF has no row-lock hint, so this is the one raw statement (UPDLOCK = SQL Server's FOR UPDATE); it still materialises the EF entity.
         await Db.Set<Quote>()
@@ -202,8 +203,8 @@ public sealed class FulfilmentService(IFoundgineRepository<Quote> quotes, IFound
             messageId.ToString(), r.Reason.Trim(), wanted.Select(w => new ReturnLineDto(w.Key, w.Value)).ToArray());
         await Outbox.EnqueueAsync(Db, messageId, t, FulfilmentIntegrationNames.ReturnRequested, request.Id, 1,
             JsonSerializer.Serialize(dto), ct, tenant.UserId);
-        await tx.CommitAsync(ct);
-        var returnId = request.Id;
+        return request.Id;
+        }, ct);
         Db.ChangeTracker.Clear();
         return await GetReturnAsync(returnId, ct);
     }

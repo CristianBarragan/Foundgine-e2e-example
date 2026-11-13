@@ -78,4 +78,29 @@ public final class Contracts {
     public static final String ERP_AUTHORIZE_RETURN = "erp.authorize-return";
     public static final String ERP_COMPLETE_RETURN = "erp.complete-return";
     public static final String CRM_RECORD_RETURN_DECISION = "crm.record-return-decision";
+
+    // Sales <-> fulfilment bot negotiation (contracts/schemas/bot-*.v1.json). Advisory: nothing is written to CRM or ERP.
+    public record BotLine(String sku, int quantity, BigDecimal unitPrice) {}
+
+    /** from: sales | fulfilment. intent: Propose | Counter | Accept | Decline. */
+    public record BotMessage(int schemaVersion, String from, int turn, String intent, List<BotLine> lines, String message) {}
+
+    public record BriefLine(String sku, int quantity, int minQuantity, BigDecimal maxUnitPrice) {}
+
+    /** The customer's wishes and limits. Only the sales bot ever receives it. */
+    public record Brief(String note, List<BriefLine> lines) {}
+
+    public record BotNegotiationStart(int schemaVersion, String tenantId, String correlationId, String negotiationId,
+                                      int crmCustomerId, int maxTurns, Brief brief) {}
+
+    /** brief is null for the fulfilment bot. history is every message so far, oldest first. */
+    public record BotTurnInput(int schemaVersion, String tenantId, String correlationId, String negotiationId, int turn,
+                               int crmCustomerId, Brief brief, List<BotMessage> history) {}
+
+    /** status: Agreed | Declined | Exhausted. lines/total are empty/zero unless Agreed. */
+    public record BotNegotiationResult(int schemaVersion, String negotiationId, String status, int turns,
+                                       List<BotLine> lines, BigDecimal total, String reason, List<BotMessage> transcript) {}
+
+    public static final String CRM_SALES_BOT_TURN = "crm.sales-bot.take-turn";
+    public static final String ERP_FULFILMENT_BOT_TURN = "erp.fulfilment-bot.take-turn";
 }
