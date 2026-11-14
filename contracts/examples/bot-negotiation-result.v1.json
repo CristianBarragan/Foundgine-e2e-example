@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "negotiationId": "neg-1001",
+  "status": "Agreed",
+  "turns": 3,
+  "lines": [ { "sku": "SKU-1", "quantity": 100, "unitPrice": 90.00 } ],
+  "total": 9000.00,
+  "reason": "",
+  "transcript": [
+    { "schemaVersion": 1, "from": "sales", "turn": 1, "intent": "Propose",
+      "lines": [ { "sku": "SKU-1", "quantity": 120, "unitPrice": 85.00 } ], "message": "Proposing 120 x SKU-1 at 85.00." },
+    { "schemaVersion": 1, "from": "fulfilment", "turn": 2, "intent": "Counter",
+      "lines": [ { "sku": "SKU-1", "quantity": 100, "unitPrice": 90.00 } ], "message": "Only 100 available; 90.00 is the floor." },
+    { "schemaVersion": 1, "from": "sales", "turn": 3, "intent": "Accept",
+      "lines": [ { "sku": "SKU-1", "quantity": 100, "unitPrice": 90.00 } ], "message": "Within the customer's limits." }
+  ]
+}

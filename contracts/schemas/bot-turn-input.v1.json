@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://enterprise.example/schemas/bot-turn-input.v1.json",
+  "title": "Activity input: crm.sales-bot.take-turn (queue crm) and erp.fulfilment-bot.take-turn (queue erp)",
+  "type": "object",
+  "required": ["schemaVersion", "tenantId", "correlationId", "negotiationId", "turn", "crmCustomerId", "history"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "tenantId": { "type": "string" },
+    "correlationId": { "type": "string" },
+    "negotiationId": { "type": "string" },
+    "turn": { "type": "integer", "minimum": 1, "description": "The turn this activity must produce." },
+    "crmCustomerId": { "type": "integer" },
+    "brief": { "$ref": "bot-negotiation-start.v1.json#/properties/brief",
+               "description": "Present for the sales bot only." },
+    "history": { "type": "array", "items": { "$ref": "bot-message.v1.json" } }
+  }
+}
