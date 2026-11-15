@@ -24,4 +24,8 @@ public class ErpCustomer {
     public String getTenantId() { return tenantId; }
     public int getCrmCustomerId() { return crmCustomerId; }
     public String getStatus() { return status; }
+    public String getKind() { return kind; }
+    public String getName() { return name; }
+    public String getEmail() { return email; }
+    public String getPhone() { return phone; }
 }

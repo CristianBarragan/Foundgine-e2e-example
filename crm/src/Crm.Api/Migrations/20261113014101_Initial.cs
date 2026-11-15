@@ -384,6 +384,12 @@ namespace Crm.Api.Migrations
                 filter: "erp_customer_id IS NOT NULL");
 
             migrationBuilder.CreateIndex(
+                name: "ux_customers_tenant_email",
+                table: "customers",
+                columns: new[] { "tenant_id", "email" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
                 name: "ix_customers_tenant_name",
                 table: "customers",
                 columns: new[] { "tenant_id", "name" });

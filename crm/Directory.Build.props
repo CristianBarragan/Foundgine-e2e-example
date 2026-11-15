@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <!-- Single place that pins the Foundgine packages used by the CRM (API and worker). -->
+    <FoundgineVersion Condition="'$(FoundgineVersion)' == ''">3.3.5</FoundgineVersion>
+  </PropertyGroup>
+</Project>

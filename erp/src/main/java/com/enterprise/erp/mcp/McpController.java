@@ -2,6 +2,8 @@ package com.enterprise.erp.mcp;
 
 import com.enterprise.erp.bots.ErpFacts;
 import com.enterprise.erp.security.ErpCaller;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.Arrays;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
@@ -33,6 +35,8 @@ import org.springframework.web.server.ResponseStatusException;
 class McpController {
     private final McpHandler handler;
     private final List<String> allowedOrigins;
+    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final String PROTOCOL_HEADER = "MCP-Protocol-Version";
 
     McpController(ErpFacts facts, @Value("${mcp.allowed-origins:}") String allowedOrigins) {
         this.handler = new McpHandler("erp-mcp", "1.0.0", ErpMcpTools.over(facts));
@@ -42,7 +46,21 @@ class McpController {
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
     @PreAuthorize("hasAnyRole('erp-inventory', 'erp-admin', 'enterprise-admin')")
     ResponseEntity<String> post(@RequestBody String body, @RequestHeader(value = "Origin", required = false) String origin,
+                                @RequestHeader(value = "Accept", required = false) String accept,
+                                @RequestHeader(value = PROTOCOL_HEADER, required = false) String protocolVersion,
                                 Authentication authentication) {
+        if (!acceptsBothRepresentations(accept)) {
+            throw new ResponseStatusException(HttpStatus.NOT_ACCEPTABLE,
+                    "Accept must include application/json and text/event-stream.");
+        }
+        if (requiresProtocolHeader(body)) {
+            if (protocolVersion == null || protocolVersion.isBlank()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, PROTOCOL_HEADER + " is required after initialize.");
+            }
+            if (!McpHandler.SUPPORTED.contains(protocolVersion.strip())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unsupported " + PROTOCOL_HEADER + ".");
+            }
+        }
         if (origin != null && !allowedOrigins.contains(origin)) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Origin not allowed.");
         var caller = ErpCaller.from(authentication);
         var tenant = caller.requireTenant();
@@ -51,7 +69,30 @@ class McpController {
                 .orElseGet(() -> ResponseEntity.accepted().build());
     }
 
-    /** No server-initiated stream and no sessions: the spec allows 405 for both. */
+    private static boolean acceptsBothRepresentations(String value) {
+        if (value == null || value.isBlank()) return false;
+        try {
+            var accepted = MediaType.parseMediaTypes(value);
+            return accepted.stream().anyMatch(m -> m.getType().equalsIgnoreCase("application")
+                    && m.getSubtype().equalsIgnoreCase("json") && m.getQualityValue() > 0)
+                    && accepted.stream().anyMatch(m -> m.getType().equalsIgnoreCase("text")
+                    && m.getSubtype().equalsIgnoreCase("event-stream") && m.getQualityValue() > 0);
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+    }
+
+    /** Legacy MCP HTTP requires the negotiated version on every request after initialize. */
+    private static boolean requiresProtocolHeader(String body) {
+        try {
+            JsonNode request = JSON.readTree(body);
+            return request == null || !"initialize".equals(request.path("method").asText());
+        } catch (Exception e) {
+            return false; // Let the JSON-RPC parser return its normal parse error.
+        }
+    }
+
+    /** No server-initiated stream and no sessions: GET is explicitly unsupported. */
     @GetMapping
     ResponseEntity<Void> get() { return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED).header("Allow", "POST").build(); }
 

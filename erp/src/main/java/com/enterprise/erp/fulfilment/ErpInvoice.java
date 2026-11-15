@@ -44,6 +44,8 @@ public class ErpInvoice extends AssignedIdEntity {
     public Instant getIssuedAt() { return issuedAt; }
     public Instant getDueAt() { return dueAt; }
     public int getVersion() { return version; }
+    public String getTenantId() { return tenantId; }
+    public Instant getUpdatedAt() { return updatedAt; }
 
     public void moveTo(String next) { this.status = next; this.version++; this.updatedAt = Instant.now(); }
 }

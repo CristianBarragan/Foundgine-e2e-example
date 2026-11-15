@@ -44,6 +44,7 @@ services:
       Auth__DevHeaders: "false"
       CrmConnectionString: "Server=crm-db,1433;Database=crm;User Id=sa;Password=${CRM_DB_PASSWORD:-Crm_dev_pw1!};TrustServerCertificate=True"
       Database__MigrateOnStart: "true"
+      Bots__Mode: "${BOTS_MODE:-rules}"
       Foundgine__Keycloak__Authority: "http://keycloak:8080/realms/enterprise"
       Foundgine__Keycloak__RequireHttpsMetadata: "false"
       Temporal__Enabled: "true"

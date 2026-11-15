@@ -28,6 +28,12 @@ public class ErpReturn {
     public String getErpReturnId() { return erpReturnId; }
     public String getStatus() { return status; }
     public String getNote() { return note; }
+    public String getTenantId() { return tenantId; }
+    public int getCrmReturnId() { return crmReturnId; }
+    public String getErpOrderId() { return erpOrderId; }
+    public String getReason() { return reason; }
+    public String getCorrelationId() { return correlationId; }
+    public Instant getUpdatedAt() { return updatedAt; }
 
     /** Goods received: Authorized -> Completed. The caller has locked the row and checked the status. */
     public void complete() {

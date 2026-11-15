@@ -35,6 +35,11 @@ class McpHandlerTest {
         assertEquals(1, r.get("id").asInt());
         var unknown = call("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"1999-01-01\"}}");
         assertEquals(McpHandler.LATEST, unknown.at("/result/protocolVersion").asText());
+        var latestLegacy = call("{\"jsonrpc\":\"2.0\",\"id\":24,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\"}}");
+        assertEquals("2025-11-25", latestLegacy.at("/result/protocolVersion").asText());
+        // A modern-era version uses server/discover and per-request metadata; initialize counter-offers legacy.
+        var modernRequest = call("{\"jsonrpc\":\"2.0\",\"id\":25,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2026-07-28\"}}");
+        assertEquals(McpHandler.LATEST, modernRequest.at("/result/protocolVersion").asText());
     }
 
     @Test void notificationsGetNoBody() {
@@ -63,6 +68,36 @@ class McpHandlerTest {
         var r2 = call("{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\",\"params\":{\"name\":\"check_skus\",\"arguments\":{\"skus\":[" + many + "]}}}");
         assertTrue(r2.at("/result/isError").asBoolean());
         assertTrue(askedTenants.isEmpty());
+    }
+
+    @Test void rejectsMalformedJsonRpcEnvelopes() throws Exception {
+        assertEquals(McpHandler.INVALID_REQUEST, call("{\"id\":1,\"method\":\"ping\"}").at("/error/code").asInt());
+        assertEquals(McpHandler.INVALID_REQUEST, call("{\"jsonrpc\":\"1.0\",\"id\":1,\"method\":\"ping\"}").at("/error/code").asInt());
+        assertEquals(McpHandler.INVALID_REQUEST, call("{\"jsonrpc\":\"2.0\",\"id\":1.5,\"method\":\"ping\"}").at("/error/code").asInt());
+        assertEquals(McpHandler.INVALID_PARAMS, call("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\",\"params\":[]}").at("/error/code").asInt());
+    }
+
+    @Test void toolsCallValidatesNameAndArgumentsBeforeDispatch() throws Exception {
+        assertEquals(McpHandler.INVALID_PARAMS, call("{\"jsonrpc\":\"2.0\",\"id\":20,\"method\":\"tools/call\",\"params\":{\"name\":17}}")
+                .at("/error/code").asInt());
+        assertEquals(McpHandler.INVALID_PARAMS, call("{\"jsonrpc\":\"2.0\",\"id\":21,\"method\":\"tools/call\",\"params\":{\"name\":\"check_sku\",\"arguments\":[]}}")
+                .at("/error/code").asInt());
+        var missingArguments = call("{\"jsonrpc\":\"2.0\",\"id\":22,\"method\":\"tools/call\",\"params\":{\"name\":\"check_sku\"}}");
+        assertTrue(missingArguments.at("/result/isError").asBoolean());
+        assertTrue(askedTenants.isEmpty());
+    }
+
+    @Test void unexpectedToolFailuresAreRedactedAsToolErrors() throws Exception {
+        var broken = new McpHandler("broken", "1", List.of(new McpHandler.Tool() {
+            public String name() { return "explode"; }
+            public String description() { return "test"; }
+            public com.fasterxml.jackson.databind.node.ObjectNode inputSchema() { return JSON.createObjectNode().put("type", "object"); }
+            public String call(McpHandler.Caller caller, JsonNode arguments) { throw new IllegalStateException("database password leaked"); }
+        }));
+        var response = JSON.readTree(broken.handle("{\"jsonrpc\":\"2.0\",\"id\":23,\"method\":\"tools/call\",\"params\":{\"name\":\"explode\"}}", acme).orElseThrow().toString());
+        assertTrue(response.at("/result/isError").asBoolean());
+        assertEquals("Tool execution failed", response.at("/result/content/0/text").asText());
+        assertFalse(response.toString().contains("database password"));
     }
 
     @Test void protocolErrors() throws Exception {
