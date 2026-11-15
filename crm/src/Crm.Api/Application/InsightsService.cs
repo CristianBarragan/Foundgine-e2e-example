@@ -1,4 +1,3 @@
-using Crm.Api.Application.Querying;
 using Crm.Api.Domain;
 using Foundgine.Providers.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
@@ -24,12 +23,11 @@ public sealed record Customer360(
     IReadOnlyList<ReturnRequest> Returns, decimal InvoicedTotal, decimal PaidTotal, decimal Outstanding);
 
 /// <summary>
-/// Cross-entity scenarios. Two tools, each used where it is strongest: relationship questions ("customers with an
-/// open deal and no ordered quote") are Foundgine semantic reads built with lambda filters through
-/// <see cref="CrmReader"/>; date arithmetic, grouping and money math are EF Core LINQ over the same
-/// <see cref="FoundgineDbContext"/>. Everything is scoped to the caller's tenant.
+/// Cross-entity scenarios. These read-only reports use explicit tenant-scoped EF Core subqueries so relationship
+/// predicates are translated as correlated EXISTS/COUNT queries by the relational provider. Every related-table
+/// predicate includes the caller's tenant, preventing cross-tenant matches even if identifiers are ever reused.
 /// </summary>
-public sealed class InsightsService(CrmReader crm, FoundgineDbContext db, CustomerService customers, ITenantContext tenant)
+public sealed class InsightsService(FoundgineDbContext db, CustomerService customers, ITenantContext tenant)
 {
     private static readonly string[] Settled = [InvoiceStatuses.Paid, InvoiceStatuses.Void];
     private static readonly string[] PaidIn = [PaymentStatuses.Received, PaymentStatuses.Reconciled];
@@ -39,34 +37,65 @@ public sealed class InsightsService(CrmReader crm, FoundgineDbContext db, Custom
     private static readonly string[] BucketOrder = ["Current", "1-30", "31-60", "60+"];
 
     /// <summary>Active customers with an open opportunity, nothing accepted or ordered, and at least one failed deal.</summary>
-    public Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> AtRiskCustomersAsync(CancellationToken ct) =>
-        crm.From<Customer>()
-            .Eq(c => c.Status, CustomerStatuses.Active)
-            .Where(
-                Filter<Customer>.Some(c => c.Opportunities, Filter<Opportunity>.In(o => o.Stage, OpportunityStages.Open)),
-                Filter<Customer>.None(c => c.Quotes,
-                    Filter<Quote>.In(q => q.Status, QuoteStatuses.Accepted, QuoteStatuses.Ordered)),
-                Filter<Customer>.Some(c => c.Quotes,
-                    Filter<Quote>.In(q => q.Status, QuoteStatuses.Rejected, QuoteStatuses.OrderFailed)))
-            .OrderBy(c => c.Name).OrderBy(c => c.Id)
-            .ToRowsAsync(ct);
+    public async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> AtRiskCustomersAsync(CancellationToken ct)
+    {
+        var t = tenant.TenantId;
+        var customers = await db.Set<Customer>().AsNoTracking()
+            .Where(c => c.TenantId == t && c.Status == CustomerStatuses.Active
+                && db.Set<Opportunity>().Any(o => o.TenantId == t && o.CustomerId == c.Id
+                    && OpenStages.Contains(o.Stage))
+                && !db.Set<Quote>().Any(q => q.TenantId == t && q.CustomerId == c.Id
+                    && (q.Status == QuoteStatuses.Accepted || q.Status == QuoteStatuses.Ordered))
+                && db.Set<Quote>().Any(q => q.TenantId == t && q.CustomerId == c.Id
+                    && (q.Status == QuoteStatuses.Rejected || q.Status == QuoteStatuses.OrderFailed)))
+            .OrderBy(c => c.Name).ThenBy(c => c.Id)
+            .ToListAsync(ct);
+        return CustomerRows(customers);
+    }
 
     /// <summary>Active customers with at least <paramref name="minOrders"/> quotes that became ERP orders.</summary>
-    public Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> KeyAccountsAsync(int minOrders, CancellationToken ct) =>
-        crm.From<Customer>()
-            .Eq(c => c.Status, CustomerStatuses.Active)
-            .Where(Filter<Customer>.AtLeast(c => c.Quotes, Math.Clamp(minOrders, 1, 1000),
-                Filter<Quote>.Eq(q => q.Status, QuoteStatuses.Ordered)))
-            .OrderBy(c => c.Name).OrderBy(c => c.Id)
-            .ToRowsAsync(ct);
+    public async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> KeyAccountsAsync(int minOrders, CancellationToken ct)
+    {
+        var t = tenant.TenantId;
+        var required = Math.Clamp(minOrders, 1, 1000);
+        var customers = await db.Set<Customer>().AsNoTracking()
+            .Where(c => c.TenantId == t && c.Status == CustomerStatuses.Active
+                && db.Set<Quote>().Count(q => q.TenantId == t && q.CustomerId == c.Id
+                    && q.Status == QuoteStatuses.Ordered) >= required)
+            .OrderBy(c => c.Name).ThenBy(c => c.Id)
+            .ToListAsync(ct);
+        return CustomerRows(customers);
+    }
 
     /// <summary>Customers whose ERP link is Pending or Failed, so their quotes cannot be accepted yet.</summary>
-    public Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> IntegrationAttentionAsync(CancellationToken ct) =>
-        crm.From<Customer>()
-            .Where(Filter<Customer>.Some(c => c.IntegrationMappings,
-                Filter<CustomerIntegrationMapping>.In(m => m.Status, MappingStatuses.Failed, MappingStatuses.Pending)))
-            .OrderBy(c => c.Name).OrderBy(c => c.Id)
-            .ToRowsAsync(ct);
+    public async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> IntegrationAttentionAsync(CancellationToken ct)
+    {
+        var t = tenant.TenantId;
+        var customers = await db.Set<Customer>().AsNoTracking()
+            .Where(c => c.TenantId == t
+                && db.Set<CustomerIntegrationMapping>().Any(m => m.TenantId == t
+                    && m.CrmCustomerId == c.Id
+                    && (m.Status == MappingStatuses.Failed || m.Status == MappingStatuses.Pending)))
+            .OrderBy(c => c.Name).ThenBy(c => c.Id)
+            .ToListAsync(ct);
+        return CustomerRows(customers);
+    }
+
+    private static IReadOnlyList<IReadOnlyDictionary<string, object?>> CustomerRows(IEnumerable<Customer> customers) =>
+        customers.Select(c => (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?>
+        {
+            [nameof(Customer.Id)] = c.Id,
+            [nameof(Customer.TenantId)] = c.TenantId,
+            [nameof(Customer.Kind)] = c.Kind,
+            [nameof(Customer.Name)] = c.Name,
+            [nameof(Customer.Email)] = c.Email,
+            [nameof(Customer.Phone)] = c.Phone,
+            [nameof(Customer.Status)] = c.Status,
+            [nameof(Customer.CreatedAt)] = c.CreatedAt,
+            [nameof(Customer.CreatedBy)] = c.CreatedBy,
+            [nameof(Customer.UpdatedAt)] = c.UpdatedAt,
+            [nameof(Customer.UpdatedBy)] = c.UpdatedBy
+        }).ToArray();
 
     /// <summary>Open opportunities untouched for <paramref name="days"/> days whose quotes are equally quiet.</summary>
     public async Task<IReadOnlyList<Opportunity>> StaleOpportunitiesAsync(int days, CancellationToken ct)

@@ -27,14 +27,19 @@ public class IntegrationTests(CrmFactory f) : IClassFixture<CrmFactory>
         return (tenant, (await res.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt32());
     }
 
-    private T Run<T>(Func<IServiceProvider, T> f2) { using var s = f.Services.CreateScope(); return f2(s.ServiceProvider); }
+    private async Task<T> RunAsync<T>(
+        Func<IServiceProvider, Task<T>> action)
+    {
+        using var scope = f.Services.CreateScope();
+        return await action(scope.ServiceProvider);
+    }
 
     [SkippableFact]
     public async Task Create_writes_pending_mapping_and_one_outbox_message_that_publishes_once()
     {
         RequireDb();
         var (tenant, id) = await CreateCustomer();
-        var m = await Run(sp => sp.GetRequiredService<IntegrationService>().GetMappingAsync(tenant, id, default));
+        var m = await RunAsync(sp => sp.GetRequiredService<IntegrationService>().GetMappingAsync(tenant, id, default));
         Assert.Equal("Pending", m!.Status);
         Assert.Null(m.ErpCustomerId);
 
