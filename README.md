@@ -1,93 +1,183 @@
-# Enterprise platform
 
-CRM (.NET 10 + Foundgine + EF Core on SQL Server) and ERP (Java + Spring Boot + JPA on PostgreSQL) integrated through Temporal, with Keycloak identity.
-See `docs/implementation-plan.txt` and `docs/decisions.md`.
+
+# Enterprise Platform — Foundgine E2E Example
+
+An end-to-end enterprise integration demonstrating how CRM and ERP systems can work together through Foundgine, Temporal, and Keycloak.
+
+The example combines independent services, databases, workflow orchestration, identity management, and MCP endpoints into an executable integration environment.
+
+## Architecture
+
+| Component | Technology | Responsibility |
+|---|---|---|
+| CRM | .NET 10, Foundgine, EF Core | Customer and commercial operations |
+| CRM database | SQL Server | CRM persistence |
+| ERP | Java, Spring Boot, JPA | Enterprise resource planning |
+| ERP database | PostgreSQL | ERP persistence |
+| Workflow orchestration | Temporal | Cross-system workflow execution |
+| Identity | Keycloak | Authentication and authorization |
+| Integration contracts | Shared contracts | Cross-service data consistency |
+| AI negotiation | Microsoft Agent Framework | Bot-assisted negotiation |
+| MCP | Foundgine MCP | Read-only integration endpoints |
+
+CRM and ERP remain independently deployable applications. Temporal coordinates workflows that span both systems.
+
+## Repository structure
+
+```text
+.
+├── crm/
+│   ├── src/
+│   │   ├── Crm.Api/
+│   │   └── Crm.Worker/
+│   └── tests/
+├── erp/
+│   └── ...
+├── temporal/
+│   └── workflows/
+├── contracts/
+├── e2e/
+│   └── selftest/
+├── scripts/
+├── docs/
+│   ├── implementation-plan.txt
+│   ├── decisions.md
+│   ├── fulfilment.md
+│   ├── quote-to-order.md
+│   ├── customer-to-cash-temporal.md
+│   ├── keycloak.md
+│   ├── mcp.md
+│   ├── bot-negotiation.md
+│   └── foundgine-erp-model.md
+├── docs-site/
+├── start.sh
+└── README.md
+```
+
+The repository also contains checkpoint documentation describing implementation progress and design decisions.
+
+## Prerequisites
+
+Install the following tools:
+
+- Docker and Docker Compose
+- .NET 10 SDK
+- Java SDK compatible with the ERP and Temporal workflow modules
+- Maven
+- Node.js and npm, if working with the TypeScript components
+- Git
+
+Docker must be running before starting the infrastructure.
 
 ## Quick start
-    ./start.sh                              # SQL Server (CRM), PostgreSQL (ERP), Temporal, Keycloak
-    dotnet run --project crm/src/Crm.Api    # creates and migrates the crm database itself
-    mvn -f erp/pom.xml spring-boot:run      # Flyway creates the erp schema; JPA validates it
-Databases: CRM = EF Core on SQL Server (localhost,1433, sa / `Crm_dev_pw1!`), ERP = JPA on PostgreSQL (localhost:5434, erp / `erp_dev_pw`).
-If you have an old `.env`, set `CRM_DB_PASSWORD=Crm_dev_pw1!` (SQL Server rejects weak passwords).
 
-## Run
-    ./start.sh                              # infrastructure (needs Docker)
-    dotnet run --project crm/src/Crm.Api    # http://localhost:5000/api/v1/health
-    mvn -f erp/pom.xml spring-boot:run      # http://localhost:8082/api/v1/health
+Start the infrastructure:
 
-## Test
-    dotnet test crm/Crm.slnx
-    mvn -f erp/pom.xml verify
+```bash
+./start.sh
+```
 
-## CRM (Phase 3)
-    ./start.sh
-    export CRM_TEST_CONNECTION="Server=localhost,1433;Database=crm_test;User Id=sa;Password=Crm_dev_pw1!;TrustServerCertificate=True"
-    dotnet test crm/Crm.slnx          # DB-backed tests skip when CRM_TEST_CONNECTION is unset
-    ASPNETCORE_ENVIRONMENT=Development dotnet run --project crm/src/Crm.Api
-Dev auth headers: `X-Tenant-Id`, `X-User-Id`, `X-Roles` (e.g. `crm-sales`). See `docs/decisions.md`.
+This starts the development dependencies, including:
 
-## Phase 8 (CRM side)
-Shipment/invoice/payment status mirrors, returns. See `docs/fulfilment.md`.
+- SQL Server for CRM
+- PostgreSQL for ERP
+- Temporal
 
-## Phase 9 (CRM side, partial)
-Rate limiting, correlation ids, admin audit trail (`GET /api/v1/audit`). See `docs/decisions.md` item 16.
+Start the applications separately using the commands below.
 
-## ERP customer onboarding (Java)
-    ./start.sh
-    mvn -f erp/pom.xml spring-boot:run -Dspring-boot.run.arguments=--temporal.enabled=true   # ERP + erp activities
-    mvn -f temporal/workflows/pom.xml exec:java                                              # orchestration worker
-    ASPNETCORE_ENVIRONMENT=Development dotnet run --project crm/src/Crm.Api                  # with Temporal:Enabled=true
-    ERP_TEST_JDBC="jdbc:postgresql://localhost:5434/erp?user=erp&password=erp_dev_pw" mvn -f erp/pom.xml verify
-Create a customer in the CRM; the outbox starts `CustomerOnboardingWorkflow`, the ERP creates its customer, the CRM mapping becomes Active.
+### Default development endpoints
 
-## Keycloak + Temporal providers (CRM)
-    dotnet run --project crm/src/Crm.Worker   # Foundgine process worker (foundgine) + C# workflow worker (crm-orchestration)
-See `docs/keycloak.md` (last section) and `docs/decisions.md` item 24.
+| Service | Address |
+|---|---|
+| CRM API | http://localhost:5000 |
+| ERP API | http://localhost:8082 |
+| SQL Server | localhost:1433 |
+| PostgreSQL | localhost:5434 |
+| Temporal | Configured by the local Temporal infrastructure |
 
-## Phase 7 (Java side): quote-to-order
-ERP order + atomic stock reservation, `QuoteToOrderWorkflow`, compensation. See `docs/quote-to-order.md` and `docs/decisions.md` item 19.
-The Java orchestration worker hosts Java workflow types on `orchestration`; the C# customer-to-cash worker polls `crm-orchestration`. The ERP (with `--temporal.enabled=true`) hosts ERP activity sets.
+### Default development database configuration
 
-## Phase 8 (Java side, returns)
-ERP return authorization/completion and `ReturnProcessingWorkflow` (waits for a `goodsReceived` signal, sent by the authenticated ERP endpoint `POST /api/v1/returns/{id}/goods-received`). See `docs/fulfilment.md`, decisions items 20-21 and 26.
+CRM SQL Server:
 
+```text
+Host: localhost
+Port: 1433
+User: sa
+Password: Crm_dev_pw1!
+```
 
+ERP PostgreSQL:
 
-## Customer-to-cash Temporal workflow (checkpoint 11)
+```text
+Host: localhost
+Port: 5434
+Database: erp
+User: erp
+Password: erp_dev_pw
+```
 
-The CRM quote-accepted outbox starts the C# `CustomerToCashWorkflow` on the shared `orchestration` queue. The C# worker coordinates approval and starts Java `QuoteToOrderWorkflow` as a child. Java remains the sole owner of ERP order creation, inventory reservation, CRM order linking, and compensation. See [docs/customer-to-cash-temporal.md](docs/customer-to-cash-temporal.md).
+These credentials are for local development only. Do not use them in production.
 
+## CRM
 
-## Latest increment
+The CRM application is implemented using .NET 10, Foundgine, Entity Framework Core, and SQL Server.
 
-See [CHECKPOINT-12.md](CHECKPOINT-12.md) for the C# fulfilment lifecycle coordinator and ERP transactional Temporal event relay.
+It provides the customer and commercial capabilities used by the integration workflows.
 
-Latest implementation increment: [Checkpoint 13](CHECKPOINT-13.md) adds executable ERP shipment, invoicing, and payment operations with transactional Temporal outbox publication.
+### Start the CRM API
 
+```bash
+dotnet run --project crm/src/Crm.Api
+```
 
-Latest implementation increment: [Checkpoint 14](CHECKPOINT-14.md) hardens single-writer CRM projections and ERP command idempotency/retry behavior.
+The API is available at:
 
-Partial snapshot: [Checkpoint 15](CHECKPOINT-15.md) (defect fixes + contract fixtures; demo not finished).
+```text
+http://localhost:5000
+```
 
-## Executable demo (checkpoint 15)
-    scripts/demo.sh            # builds and starts everything in containers, drives the whole journey, checks Temporal, tears down
-    scripts/demo.sh --keep     # same, but leave the stack running
-The overlay `infrastructure/docker-compose.demo.yml` adds the CRM API, CRM worker, ERP and orchestration worker, pins Keycloak to
-`http://keycloak:8080` (token issuer must be identical for every service), seeds demo stock for tenant `acme`, and runs `e2e/run.sh`
-with real Keycloak tokens. `e2e/selftest/run-selftest.sh` checks the runner itself against a mock stack (no Docker needed).
+### Start the CRM worker
 
-## MCP servers (checkpoint 18)
-CRM (`Mcp__Enabled=true`) and ERP (`ERP_MCP_ENABLED=true`) expose read-only MCP servers at `/mcp`. See [docs/mcp.md](docs/mcp.md).
+```bash
+dotnet run --project crm/src/Crm.Worker
+```
 
-## Foundgine 3.3.5 (increment 1)
-The CRM pins Foundgine through `crm/Directory.Build.props` (`FoundgineVersion`, now `3.3.5`). `nuget.config` checks `nuget-local/` first, then nuget.org.
-For a package or feature that is not on nuget.org yet, pack it from a Foundgine checkout (temporary, delete the files afterwards):
+The CRM worker participates in Temporal orchestration using the configured task queue.
 
-    scripts/pack-foundgine.sh /path/to/Foundgine 3.3.5
+### CRM tests
 
-The Java orchestration module lives in `temporal/workflows` (the Dockerfile and the commands above already expect it there).
+Configure the test database connection:
 
-## Bot negotiation (MAF sales bot)
-See [docs/bot-negotiation.md](docs/bot-negotiation.md). Needs `Foundgine.Providers.AgentFramework` in `nuget-local` (`scripts/pack-foundgine.sh`; `scripts/demo.sh` does it when `FOUNDGINE_REPO` is set).
+```powershell
+$env:CRM_TEST_CONNECTION="your-test-connection-string"
+```
 
-ERP Foundgine model: see [docs/foundgine-erp-model.md](docs/foundgine-erp-model.md).
+Run the CRM tests:
+
+```bash
+dotnet test
+```
+
+Use an isolated test database. Do not point automated tests at production data.
+
+## ERP
+
+The ERP application is implemented using Java, Spring Boot, and JPA, with PostgreSQL as its persistence layer.
+
+It provides the ERP-side business capabilities required by the integration.
+
+### Start the ERP API
+
+```bash
+mvn -f erp/pom.xml spring-boot:run
+```
+
+The API is available at:
+
+```text
+http://localhost:8082
+```
+
+### ERP tests
+
+Configure the
