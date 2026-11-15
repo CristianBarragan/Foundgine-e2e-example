@@ -78,3 +78,16 @@ with real Keycloak tokens. `e2e/selftest/run-selftest.sh` checks the runner itse
 
 ## MCP servers (checkpoint 18)
 CRM (`Mcp__Enabled=true`) and ERP (`ERP_MCP_ENABLED=true`) expose read-only MCP servers at `/mcp`. See [docs/mcp.md](docs/mcp.md).
+
+## Foundgine 3.3.5 (increment 1)
+The CRM pins Foundgine through `crm/Directory.Build.props` (`FoundgineVersion`, now `3.3.5`). `nuget.config` checks `nuget-local/` first, then nuget.org.
+For a package or feature that is not on nuget.org yet, pack it from a Foundgine checkout (temporary, delete the files afterwards):
+
+    scripts/pack-foundgine.sh /path/to/Foundgine 3.3.5
+
+The Java orchestration module lives in `temporal/workflows` (the Dockerfile and the commands above already expect it there).
+
+## Bot negotiation (MAF sales bot)
+See [docs/bot-negotiation.md](docs/bot-negotiation.md). Needs `Foundgine.Providers.AgentFramework` in `nuget-local` (`scripts/pack-foundgine.sh`; `scripts/demo.sh` does it when `FOUNDGINE_REPO` is set).
+
+ERP Foundgine model: see [docs/foundgine-erp-model.md](docs/foundgine-erp-model.md).

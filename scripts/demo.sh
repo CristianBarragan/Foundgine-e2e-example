@@ -9,6 +9,13 @@ DC=(docker compose --env-file .env -f infrastructure/docker-compose.yml -f infra
 cleanup() { [ "${1:-}" = --keep ] || "${DC[@]}" down -v >/dev/null 2>&1 || true; }
 trap 'rc=$?; [ $rc -eq 0 ] || "${DC[@]}" logs --no-color --tail=80 crm-api crm-worker erp orchestration temporal || true; cleanup "${1:-}"; exit $rc' EXIT
 
+# Temporary: Foundgine.Providers.AgentFramework is not on nuget.org yet; the Docker builds read it from nuget-local.
+V=$(sed -n 's|.*<FoundgineVersion[^>]*>\([^<]*\)</FoundgineVersion>.*|\1|p' crm/Directory.Build.props | head -1)
+if ! ls nuget-local/foundgine.providers.agentframework."$V".nupkg >/dev/null 2>&1; then
+  [ -n "${FOUNDGINE_REPO:-}" ] || { echo "Missing nuget-local/foundgine.providers.agentframework.$V.nupkg: set FOUNDGINE_REPO=/path/to/Foundgine (or run scripts/pack-foundgine.sh)"; exit 1; }
+  scripts/pack-foundgine.sh "$FOUNDGINE_REPO" "$V"
+fi
+
 "${DC[@]}" up -d --build --wait
 out=$("${DC[@]}" --profile e2e run --rm e2e | tee /dev/stderr)
 quote=$(sed -n 's/^E2E_OK quoteId=\([0-9]*\) .*/\1/p' <<<"$out" | tail -1)

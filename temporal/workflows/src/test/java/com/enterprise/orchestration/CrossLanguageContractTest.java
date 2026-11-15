@@ -93,4 +93,21 @@ class CrossLanguageContractTest {
             assertTrue(invoice.has(name), "invoice fixture is missing " + name);
         assertEquals(9, invoice.size());
     }
+
+    @Test void theCSharpSalesBotReplyIsAValidNegotiationMessage() throws Exception {
+        // Exactly what Crm.Api's SalesBotActivities serializes for turn 3 (System.Text.Json, camelCase, decimals).
+        String json = "{\"schemaVersion\":1,\"from\":\"sales\",\"turn\":3,\"intent\":\"Accept\","
+                + "\"lines\":[{\"sku\":\"SKU-1\",\"quantity\":8,\"unitPrice\":95.00}],\"message\":\"Within the customer's limits.\"}";
+        var reply = CONVERTER.fromPayload(jsonPayload(json.getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                Contracts.BotMessage.class, Contracts.BotMessage.class);
+
+        var history = java.util.List.of(
+                new Contracts.BotMessage(1, "sales", 1, "Propose",
+                        java.util.List.of(new Contracts.BotLine("SKU-1", 10, new BigDecimal("85.00"))), ""),
+                new Contracts.BotMessage(1, "fulfilment", 2, "Counter",
+                        java.util.List.of(new Contracts.BotLine("SKU-1", 8, new BigDecimal("95"))), ""));
+        NegotiationRules.validate(reply, 3, history); // an Accept must repeat the lines of turn 2 (95 equals 95.00)
+        assertEquals("sales", reply.from());
+        assertEquals("Accept", reply.intent());
+    }
 }

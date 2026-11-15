@@ -27,6 +27,11 @@ public class SalesOrder {
     public String getErpCustomerId() { return erpCustomerId; }
     public BigDecimal getTotal() { return total; }
     public String getStatus() { return status; }
+    public int getCrmQuoteId() { return crmQuoteId; }
+    public String getTenantId() { return tenantId; }
+    public String getCancelReason() { return cancelReason; }
+    public String getCorrelationId() { return correlationId; }
+    public Instant getUpdatedAt() { return updatedAt; }
 
     public void cancel(String reason) {
         this.status = "Cancelled";

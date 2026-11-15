@@ -30,7 +30,7 @@ class ErpProjectionDeliveryTest {
             calls.add(kind);
             if (failuresLeft.getAndUpdate(n -> n > 0 ? n - 1 : 0) > 0) {
                 if (failureType == null) throw new RuntimeException("CRM unavailable");
-                throw ApplicationFailure.newFailure("bad status", failureType);
+                throw ApplicationFailure.newNonRetryableFailure("bad status", failureType);
             }
             versions.merge(kind + ":" + in.get(idKey), ((Number) in.get("version")).intValue(), Math::max);
         }

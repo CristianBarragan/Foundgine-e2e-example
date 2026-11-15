@@ -90,10 +90,26 @@ public class InsightsTests(CrmFactory f) : IClassFixture<CrmFactory>
         .GetProperty("quote").GetProperty("id").GetInt32();
 
     // Semantic rows are dictionaries keyed by field name; read the key without depending on its casing.
-    private static async Task<int[]> Ids(HttpClient c, string url) =>
-        (await Json(await c.GetAsync(url))).EnumerateArray()
-        .Select(x => x.EnumerateObject().First(p => string.Equals(p.Name, "id", StringComparison.OrdinalIgnoreCase)).Value.GetInt32())
-        .ToArray();
+    private static async Task<int[]> Ids(HttpClient c, string url)
+    {
+        var response = await c.GetAsync(url);
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.True(response.IsSuccessStatusCode,
+            $"GET {url} failed: {(int)response.StatusCode} {body}");
+
+        using var document = JsonDocument.Parse(body);
+        var root = document.RootElement;
+
+        Assert.True(root.ValueKind == JsonValueKind.Array,
+            $"Expected an array from {url}, received: {body}");
+
+        return root.EnumerateArray()
+            .Select(x => x.EnumerateObject().First(p =>
+                    string.Equals(p.Name, "id", StringComparison.OrdinalIgnoreCase))
+                .Value.GetInt32())
+            .ToArray();
+    }
 
     [SkippableFact]
     public async Task At_risk_means_open_deal_no_accepted_quote_and_a_failed_one()

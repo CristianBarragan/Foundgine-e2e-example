@@ -1,10 +1,21 @@
 name: ci
 
-on: [push, pull_request]
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  FOUNDGINE_COMMIT: dd18ccf9fd05cca927cfb5224d415f9726727bae
+  FOUNDGINE_VERSION: 3.3.6-ci.dd18ccf9fd05
 
 jobs:
   contracts:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -12,8 +23,11 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: pip install jsonschema referencing
-      - run: python3 scripts/validate-contracts.py
+      - name: Install contract validation dependencies
+        run: pip install jsonschema referencing
+
+      - name: Validate shared contracts
+        run: python3 scripts/validate-contracts.py
 
   crm:
     runs-on: ubuntu-latest
@@ -23,7 +37,7 @@ jobs:
         image: mcr.microsoft.com/mssql/server:2022-latest
         env:
           ACCEPT_EULA: "Y"
-          MSSQL_SA_PASSWORD: "Crm_dev_pw1!"
+          MSSQL_SA_PASSWORD: Crm_dev_pw1!
         ports:
           - "1433:1433"
         options: >-
@@ -34,51 +48,38 @@ jobs:
           --health-start-period 15s
 
     env:
-      # sa: OutboxRecoveryTests creates and drops its own database.
       CRM_TEST_CONNECTION: Server=localhost,1433;Database=crm;User Id=sa;Password=Crm_dev_pw1!;TrustServerCertificate=True
 
     steps:
-      # Checkout the E2E example repository.
-      - name: Checkout E2E example
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
 
-      # Pin Foundgine to an exact source commit.
+      # Check out the exact Foundgine revision used by this E2E run.
       - name: Checkout Foundgine
         uses: actions/checkout@v4
         with:
           repository: CristianBarragan/Foundgine
-          ref: dd18ccf9fd05cca927cfb5224d415f9726727bae
+          ref: ${{ env.FOUNDGINE_COMMIT }}
           path: foundgine-src
 
-      # Derive a unique, traceable prerelease package version.
-      - name: Set Foundgine package version
-        shell: bash
+      # Build the Foundgine NuGet packages into the local feed.
+      - name: Pack Foundgine packages
         run: |
-          SHA=$(git -C foundgine-src rev-parse --short=12 HEAD)
-          echo "FOUNDGINE_VERSION=3.3.6-ci.${SHA}" >> "$GITHUB_ENV"
-          echo "Using Foundgine version 3.3.6-ci.${SHA}"
+          bash scripts/pack-foundgine.sh foundgine-src "$FOUNDGINE_VERSION"
 
-      # Build local Foundgine NuGet packages.
-      - name: Pack Foundgine
-        shell: bash
-        run: |
-          ./scripts/pack-foundgine.sh foundgine-src "$FOUNDGINE_VERSION"
-
-      # Build and test CRM against the pinned Foundgine packages.
-      - name: Test CRM
+      # Restore and run the CRM tests against the locally packed packages.
+      - name: Run CRM tests
         run: |
           dotnet test crm/Crm.slnx \
+            -p:FoundgineVersion="$FOUNDGINE_VERSION" \
             --logger "trx" \
-            --results-directory crm-results \
-            -p:FoundgineVersion="$FOUNDGINE_VERSION"
+            --results-directory crm-results
 
-      # DB-backed tests are SkippableFact; reject skipped tests.
-      - name: Assert no skipped tests
+      # DB-backed tests must execute rather than silently skip.
+      - name: Reject skipped CRM tests
         run: python3 scripts/assert-no-skipped.py crm-results
 
   erp:
@@ -109,10 +110,69 @@ jobs:
         with:
           distribution: temurin
           java-version: 27
+          cache: maven
 
-      - run: mvn -B -f erp/pom.xml verify
+      # Check out the exact same Foundgine revision used by CRM.
+      - uses: actions/checkout@v4
+        with:
+          repository: CristianBarragan/Foundgine
+          ref: ${{ env.FOUNDGINE_COMMIT }}
+          path: foundgine-src
 
-      - run: python3 scripts/assert-no-skipped.py erp/target/surefire-reports
+      # Build and install the Java artifacts into this runner's local Maven repository.
+      # -am also builds the required reactor dependencies.
+      # The revision property overrides the Java parent's default version.
+      # GPG signing is disabled because this is a CI-local installation.
+      - name: Build and install Foundgine Java modules
+        run: |
+          mvn -B \
+            -f foundgine-src/src/java/pom.xml \
+            -Drevision="$FOUNDGINE_VERSION" \
+            -DskipTests \
+            -Dgpg.skip=true \
+            -pl foundgine-core,foundgine-providers \
+            -am \
+            install
+
+      # Confirm the expected version was installed locally.
+      - name: Verify installed Foundgine artifacts
+        run: |
+          VERSION="$FOUNDGINE_VERSION"
+
+          test -f "$HOME/.m2/repository/io/github/cristianbarragan/foundgine-core/$VERSION/foundgine-core-$VERSION.jar"
+          test -f "$HOME/.m2/repository/io/github/cristianbarragan/foundgine-providers/$VERSION/foundgine-providers-$VERSION.jar"
+
+          echo "Foundgine Java artifacts installed:"
+          echo "  foundgine-core:$VERSION"
+          echo "  foundgine-providers:$VERSION"
+
+      # Force ERP to resolve the same commit-derived version.
+      - name: Run ERP integration tests
+        run: |
+          mvn -B \
+            -f erp/pom.xml \
+            -Dfoundgine.version="$FOUNDGINE_VERSION" \
+            verify
+
+      # Reject skipped tests.
+      - name: Reject skipped ERP tests
+        run: |
+          python3 scripts/assert-no-skipped.py erp/target/surefire-reports
+
+  orchestration:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - name: Verify Temporal workflows
+        run: mvn -B -f temporal/workflows/pom.xml verify
 
   infra:
     runs-on: ubuntu-latest
@@ -120,8 +180,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - run: cp .env.example .env
+      - name: Prepare environment
+        run: cp .env.example .env
 
-      - run: docker compose --env-file .env -f infrastructure/docker-compose.yml config -q
+      - name: Validate base Docker Compose configuration
+        run: |
+          docker compose \
+            --env-file .env \
+            -f infrastructure/docker-compose.yml \
+            config -q
 
-      - run: docker compose --env-file .env -f infrastructure/docker-compose.yml -f infrastructure/docker-compose.demo.yml --profile e2e config -q
+      - name: Validate E2E Docker Compose configuration
+        run: |
+          docker compose \
+            --env-file .env \
+            -f infrastructure/docker-compose.yml \
+            -f infrastructure/docker-compose.demo.yml \
+            --profile e2e \
+            config -q

@@ -8,9 +8,12 @@
   <ItemGroup>
     <!-- Single Foundgine dependency. Core and Runtime arrive transitively; the EF Core provider, ORM core and both
          source generators (analyzers) are bundled inside this package. -->
-    <PackageReference Include="Foundgine.Providers" Version="3.3.3" />
+    <PackageReference Include="Foundgine.Providers" Version="$(FoundgineVersion)" />
     <!-- Keycloak identity provider and Temporal workflow provider (bridge, process workflow, start/status endpoints). -->
-    <PackageReference Include="Foundgine.Extensions" Version="3.3.3" />
+    <PackageReference Include="Foundgine.Extensions" Version="$(FoundgineVersion)" />
+    <!-- Microsoft Agent Framework adapter (sales bot of the Java BotNegotiationWorkflow). Post-3.3.5 in the Foundgine repo, so not
+         on nuget.org yet: run scripts/pack-foundgine.sh once to place it in nuget-local (temporary). -->
+    <PackageReference Include="Foundgine.Providers.AgentFramework" Version="$(FoundgineVersion)" />
     <!-- MCP streamable-HTTP transport for the Foundgine MCP adapter (Foundgine.Providers brings ModelContextProtocol 2.2.0 itself). -->
     <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.2.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.0" />

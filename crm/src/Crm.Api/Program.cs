@@ -53,6 +53,8 @@ builder.Services.AddRateLimiter(o =>
         });
     });
 });
+// Sales bot of the Java BotNegotiationWorkflow: Bots:Mode=rules (default) or maf (Foundgine MAF adapter, needs an IChatClient).
+builder.Services.AddCrmSalesBot(builder.Configuration);
 builder.Services.AddScoped<OutboxPublisher>();
 builder.Services.AddScoped<IOutboxRouter, OutboxRouter>();
 builder.Services.AddSingleton<IWorkflowStarter, TemporalWorkflowStarter>();
@@ -91,9 +93,11 @@ if (temporal.Enabled)
     // interceptor as TemporalWorkflowStarter; Foundgine itself has no interceptor option, so this is a host-side override.
     builder.Services.AddFoundgineTemporalTracing();
     builder.Services.AddScoped<Foundgine.Extensions.Temporal.Messaging.FoundgineTemporalOutboxPublisher>();
+    builder.Services.AddSingleton<BotNegotiationStarter>();
     builder.Services.AddHostedService<OutboxPublisherService>();
     builder.Services.AddHostedTemporalWorker(temporal.Address, temporal.Namespace, temporal.CrmTaskQueue)
         .AddScopedActivities<CrmActivities>()
+        .AddScopedActivities<SalesBotActivities>()
         .ConfigureOptions(o => o.Interceptors = [new TracingInterceptor()]); // trace context from workflow headers -> activity span
 }
 
@@ -122,6 +126,23 @@ if (temporal.Enabled)
 {
     // Start/status/decision/cancel for Foundgine processes. Tenant and subject come from the Keycloak warrant context,
     // so another tenant's workflow cannot be addressed. Admin-only: a process can create Keycloak users.
+    // Sales <-> fulfilment bot negotiation (Java workflow, C# sales bot activity, Java fulfilment bot activity). Advisory only.
+    var negotiations = app.MapGroup("/api/v1/negotiations").RequireAuthorization(CrmRoles.WritePolicy);
+    negotiations.MapPost("", async (StartNegotiationRequest r, ITenantContext tenant, BotNegotiationStarter starter,
+        HttpContext http, CancellationToken ct) =>
+    {
+        BotNegotiationStart start;
+        try { start = BotNegotiationStarter.Build(tenant, r, http.TraceIdentifier); }
+        catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+        var workflowId = await starter.StartAsync(start, tenant.UserId, ct);
+        return Results.Accepted($"/api/v1/negotiations/{start.NegotiationId}", new { negotiationId = start.NegotiationId, workflowId });
+    });
+    negotiations.MapGet("{negotiationId}", async (string negotiationId, ITenantContext tenant, BotNegotiationStarter starter) =>
+    {
+        try { return Results.Ok(await starter.GetAsync(tenant.TenantId, negotiationId)); }
+        catch (Temporalio.Exceptions.RpcException ex) when (ex.Code == Temporalio.Exceptions.RpcException.StatusCode.NotFound)
+        { return Results.NotFound(); }
+    });
     app.MapGroup("/api/v1/workflows").RequireAuthorization(CrmRoles.AdminPolicy)
         .AddEndpointFilter(new AuditFilter("workflow"))
         .MapFoundgineTemporal("", o => o.ApprovalPolicy = CrmRoles.AdminPolicy);

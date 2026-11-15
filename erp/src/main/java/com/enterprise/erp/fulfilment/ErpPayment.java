@@ -44,6 +44,9 @@ public class ErpPayment extends AssignedIdEntity {
     public BigDecimal getAmount() { return amount; }
     public String getStatus() { return status; }
     public int getVersion() { return version; }
+    public String getTenantId() { return tenantId; }
+    public String getIdempotencyKey() { return idempotencyKey; }
+    public Instant getUpdatedAt() { return updatedAt; }
 
     public void moveTo(String next) { this.status = next; this.version++; this.updatedAt = Instant.now(); }
 }

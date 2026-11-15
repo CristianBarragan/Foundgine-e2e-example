@@ -109,4 +109,14 @@ FINAL=$(stock); echo "$FINAL"
 [ "$(jq -r .onHand <<<"$FINAL")" -eq $((ONHAND0 - QTY)) ] || fail "expected onHand=$((ONHAND0 - QTY)) after shipping, got $(jq -r .onHand <<<"$FINAL")"
 [ "$(jq -r .reserved <<<"$FINAL")" -eq "$RES0" ] || fail "expected reserved=$RES0 after shipping, got $(jq -r .reserved <<<"$FINAL")"
 
+if [ "${E2E_NEGOTIATION:-0}" = 1 ]; then
+  say "Bot negotiation (Java workflow, C# sales bot, Java fulfilment bot)"
+  NEG=$(call POST "$CRM_URL/api/v1/negotiations" "$ALICE" \
+    "{\"crmCustomerId\":$CID,\"maxTurns\":6,\"lines\":[{\"sku\":\"$SKU\",\"quantity\":2,\"minQuantity\":1,\"maxUnitPrice\":$UNIT_PRICE}]}")
+  NID=$(jq -er .negotiationId <<<"$NEG")
+  negotiated() { case "$(call GET "$CRM_URL/api/v1/negotiations/$NID" "$ALICE" | jq -r .status)" in Agreed|Declined|Exhausted) return 0;; *) return 1;; esac; }
+  until_ok "negotiation $NID to settle" negotiated
+  call GET "$CRM_URL/api/v1/negotiations/$NID" "$ALICE" | jq '{status,turns:(.transcript|length)}'
+fi
+
 printf '\nE2E_OK quoteId=%s tenant=acme\n' "$QID"

@@ -239,6 +239,10 @@ namespace Crm.Api.Migrations
                     b.HasIndex("TenantId", "Name")
                         .HasDatabaseName("ix_customers_tenant_name");
 
+                    b.HasIndex("TenantId", "Email")
+                        .IsUnique()
+                        .HasDatabaseName("ux_customers_tenant_email");
+
                     b.ToTable("customers", null, t =>
                         {
                             t.HasCheckConstraint("customers_kind_check", "kind IN ('Business', 'Individual')");

@@ -29,8 +29,9 @@ public static class CrmStorage
             e.Property(x => x.Phone).HasMaxLength(50);
             e.Property(x => x.Status).HasMaxLength(16);
             e.HasIndex(x => new { x.TenantId, x.Name }).HasDatabaseName("ix_customers_tenant_name");
-            // ux_customers_tenant_email is a functional index on lower(email); EF cannot model it, so the migration
-            // creates it with raw SQL (see 20261113000000_InitialCrm).
+            // One customer per e-mail per tenant. SQL Server's default collation is case-insensitive, so a plain unique
+            // index gives the same rule the former lower(email) index enforced (CustomerService maps the violation to a conflict).
+            e.HasIndex(x => new { x.TenantId, x.Email }).IsUnique().HasDatabaseName("ux_customers_tenant_email");
         });
 
         mb.Entity<Contact>(e =>

@@ -14,8 +14,9 @@ import java.util.Optional;
  * {@link Caller} is built from the validated token by the controller; tool arguments can never name a tenant.
  */
 public final class McpHandler {
-    public static final String LATEST = "2025-06-18";
-    static final List<String> SUPPORTED = List.of(LATEST, "2025-03-26", "2024-11-05");
+    /** Latest supported legacy/handshake protocol revision; the 2026 stateless era is not implemented here. */
+    public static final String LATEST = "2025-11-25";
+    static final List<String> SUPPORTED = List.of(LATEST, "2025-06-18", "2025-03-26", "2024-11-05");
     static final int PARSE_ERROR = -32700, INVALID_REQUEST = -32600, METHOD_NOT_FOUND = -32601, INVALID_PARAMS = -32602;
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -56,13 +57,24 @@ public final class McpHandler {
         }
         if (request == null || !request.isObject()) return Optional.of(error(null, INVALID_REQUEST, "Batches and non-objects are not supported"));
         var id = request.get("id");
-        var method = request.path("method").asText("");
-        if (method.isEmpty()) {
-            // A JSON-RPC response sent by the client (no method) is accepted and ignored.
-            return request.has("result") || request.has("error") ? Optional.empty() : Optional.of(error(id, INVALID_REQUEST, "method is required"));
+        if (!"2.0".equals(request.path("jsonrpc").asText())) {
+            return Optional.of(error(validErrorId(id), INVALID_REQUEST, "jsonrpc must be 2.0"));
         }
-        if (id == null || id.isNull()) return Optional.empty(); // notification (e.g. notifications/initialized)
+        var methodNode = request.get("method");
+        if (methodNode == null || !methodNode.isTextual() || methodNode.asText().isBlank()) {
+            // A JSON-RPC response sent by the client (no method) is accepted and ignored.
+            if (!request.has("method") && (request.has("result") || request.has("error"))) return Optional.empty();
+            return Optional.of(error(validErrorId(id), INVALID_REQUEST, "method must be a non-empty string"));
+        }
+        if (id != null && !id.isTextual() && !id.isIntegralNumber()) {
+            return Optional.of(error(null, INVALID_REQUEST, "id must be a string or integer"));
+        }
+        if (id == null) return Optional.empty(); // notification (e.g. notifications/initialized)
+        var method = methodNode.asText();
         var params = request.path("params");
+        if (!params.isMissingNode() && !params.isObject()) {
+            return Optional.of(error(id, INVALID_PARAMS, "params must be an object"));
+        }
         return Optional.of(switch (method) {
             case "initialize" -> result(id, initialize(params));
             case "ping" -> result(id, JSON.createObjectNode());
@@ -96,18 +108,30 @@ public final class McpHandler {
     }
 
     private ObjectNode callTool(JsonNode id, JsonNode params, Caller caller) {
-        var tool = tools.get(params.path("name").asText(""));
-        if (tool == null) return error(id, INVALID_PARAMS, "Unknown tool: " + params.path("name").asText(""));
+        var name = params.path("name");
+        if (!name.isTextual() || name.asText().isBlank()) return error(id, INVALID_PARAMS, "tools/call requires a non-empty tool name");
+        var tool = tools.get(name.asText());
+        if (tool == null) return error(id, INVALID_PARAMS, "Unknown tool: " + name.asText());
+        var arguments = params.path("arguments");
+        if (arguments.isMissingNode()) arguments = JSON.createObjectNode();
+        if (!arguments.isObject()) return error(id, INVALID_PARAMS, "tool arguments must be an object");
         var content = JSON.createObjectNode();
         try {
             content.put("isError", false);
-            content.putArray("content").addObject().put("type", "text").put("text", tool.call(caller, params.path("arguments")));
+            content.putArray("content").addObject().put("type", "text").put("text", tool.call(caller, arguments));
         } catch (ToolInputException e) {
-            content.removeAll();
             content.put("isError", true);
             content.putArray("content").addObject().put("type", "text").put("text", e.getMessage());
+        } catch (RuntimeException e) {
+            // Do not leak database, provider, or implementation details to an untrusted MCP caller.
+            content.put("isError", true);
+            content.putArray("content").addObject().put("type", "text").put("text", "Tool execution failed");
         }
         return result(id, content);
+    }
+
+    private static JsonNode validErrorId(JsonNode id) {
+        return id != null && (id.isTextual() || id.isIntegralNumber()) ? id : null;
     }
 
     private static ObjectNode result(JsonNode id, JsonNode result) {

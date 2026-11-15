@@ -22,6 +22,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
+import org.springframework.http.MediaType;
 
 // Who may use /mcp and that tenant and caller come from the token only.
 @SpringBootTest(properties = {
@@ -50,33 +51,61 @@ class McpControllerTest extends com.enterprise.erp.NoDatabaseTestBase {
                 });
     }
 
+    private static org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder mcpPost(String body) {
+        return post("/mcp").contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.APPLICATION_JSON, MediaType.TEXT_EVENT_STREAM)
+                .header("MCP-Protocol-Version", "2025-11-25").content(body);
+    }
+
     @Test void needsAToken() throws Exception {
-        mvc.perform(post("/mcp").contentType("application/json").content(CALL)).andExpect(status().isUnauthorized());
+        mvc.perform(mcpPost(CALL)).andExpect(status().isUnauthorized());
     }
 
     @Test void nonErpRolesAreForbidden() throws Exception {
-        mvc.perform(post("/mcp").contentType("application/json").content(CALL).with(caller("acme", "crm-admin"))).andExpect(status().isForbidden());
+        mvc.perform(mcpPost(CALL).with(caller("acme", "crm-admin"))).andExpect(status().isForbidden());
     }
 
     @Test void serviceAccountWithoutTenantIsRefused() throws Exception {
-        mvc.perform(post("/mcp").contentType("application/json").content(CALL).with(caller(null, "erp-inventory"))).andExpect(status().isForbidden());
+        mvc.perform(mcpPost(CALL).with(caller(null, "erp-inventory"))).andExpect(status().isForbidden());
     }
 
     @Test void browserOriginIsRejectedUnlessAllowed() throws Exception {
-        mvc.perform(post("/mcp").header("Origin", "https://evil.example").contentType("application/json").content(CALL)
+        mvc.perform(mcpPost(CALL).header("Origin", "https://evil.example")
                 .with(caller("acme", "erp-inventory"))).andExpect(status().isForbidden());
     }
 
     @Test void toolRunsForTheTokensTenant() throws Exception {
         when(facts.factsFor("acme", List.of("SKU-1"))).thenReturn(Map.of("SKU-1", new StockFact("SKU-1", true, 7, new BigDecimal("90.00"))));
-        mvc.perform(post("/mcp").contentType("application/json").content(CALL).with(caller("acme", "erp-inventory")))
+        mvc.perform(mcpPost(CALL).with(caller("acme", "erp-inventory")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.result.isError").value(false))
                 .andExpect(jsonPath("$.result.content[0].text").value(org.hamcrest.Matchers.containsString("\"available\":7")));
     }
 
+
+    @Test void requiresBothAcceptTypesAndProtocolVersionAfterInitialize() throws Exception {
+        mvc.perform(post("/mcp").contentType(MediaType.APPLICATION_JSON).accept(MediaType.APPLICATION_JSON)
+                .header("MCP-Protocol-Version", "2025-11-25").content(CALL).with(caller("acme", "erp-inventory")))
+                .andExpect(status().isNotAcceptable());
+        mvc.perform(post("/mcp").contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.APPLICATION_JSON, MediaType.TEXT_EVENT_STREAM).content(CALL)
+                .with(caller("acme", "erp-inventory"))).andExpect(status().isBadRequest());
+        mvc.perform(post("/mcp").contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.APPLICATION_JSON, MediaType.TEXT_EVENT_STREAM)
+                .header("MCP-Protocol-Version", "2026-07-28").content(CALL)
+                .with(caller("acme", "erp-inventory"))).andExpect(status().isBadRequest());
+    }
+
+    @Test void acceptsInitializeWithoutProtocolHeader() throws Exception {
+        var initialize = "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\"}}";
+        mvc.perform(post("/mcp").contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.APPLICATION_JSON, MediaType.TEXT_EVENT_STREAM).content(initialize)
+                .with(caller("acme", "erp-inventory"))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.result.protocolVersion").value("2025-11-25"));
+    }
+
     @Test void notificationIsAcceptedAndGetIsNotAllowed() throws Exception {
-        mvc.perform(post("/mcp").contentType("application/json").content("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}")
+        mvc.perform(mcpPost("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}")
                 .with(caller("acme", "erp-admin"))).andExpect(status().isAccepted());
         mvc.perform(get("/mcp").with(caller("acme", "erp-admin"))).andExpect(status().isMethodNotAllowed());
     }
